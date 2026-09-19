@@ -1,0 +1,7 @@
+# Non-secret settings. Credentials live in .env only.
+# Paths are relative to the repo root, or absolute.
+
+[toss]
+base_url = "https://openapi.tossinvest.com"
+token_cache = ".toss_token.json"
+db = "data/toss/orders.sqlite"

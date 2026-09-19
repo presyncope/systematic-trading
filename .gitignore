@@ -1,0 +1,19 @@
+# Credentials / token cache
+.env
+.toss_token.json
+
+# Collected data
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Tool caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
