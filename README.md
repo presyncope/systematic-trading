@@ -113,10 +113,12 @@ put the security token in `.env` as `GHOSTFOLIO_ACCESS_TOKEN` and the instance U
 `daily-sync` runs the whole chain once a day: backfill → `toss-export-ghostfolio --cash` →
 Ghostfolio API import (dry run first; only new activities are created) → `toss-export-tradesviz`
 (copied to `[tradesviz] sync_dir` if set, e.g. a Google Drive folder TradesViz auto-syncs from).
-Anything that is not clean is posted to `NOTIFY_WEBHOOK_URL` (Discord or Slack incoming webhook,
-in `.env`); `--notify-success` also posts the daily summary.
+Anything that is not clean is sent to Telegram (`TELEGRAM_BOT_TOKEN` from @BotFather and
+`TELEGRAM_CHAT_ID` in `.env`) and/or a Discord/Slack incoming webhook (`NOTIFY_WEBHOOK_URL`);
+`--notify-success` also sends the daily summary.
 
 ```bash
+uv run daily-sync --notify-test          # first: message the bot, then this prints the chat id / sends a test
 deploy/bin/daily-sync.sh                 # run now; log in data/logs/daily-sync.log
 uv run daily-sync --no-notify            # print only
 ```

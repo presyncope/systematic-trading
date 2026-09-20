@@ -1,6 +1,7 @@
 """Settings loading: secrets from .env, everything else from config.toml.
 
-- .env            : TOSS_CLIENT_ID / TOSS_CLIENT_SECRET, GHOSTFOLIO_ACCESS_TOKEN, NOTIFY_WEBHOOK_URL (gitignored)
+- .env            : TOSS_CLIENT_ID / TOSS_CLIENT_SECRET, GHOSTFOLIO_ACCESS_TOKEN, NOTIFY_WEBHOOK_URL,
+                    TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (gitignored)
 - config.toml     : non-secret settings: [toss] base_url, token_cache, db, export paths;
                     [ghostfolio] url; [tradesviz] sync_dir (committed)
 
@@ -29,6 +30,7 @@ __all__ = [
     "load",
     "notify_webhook_url",
     "section",
+    "telegram_credentials",
     "token_cache_path",
     "tradesviz_csv_path",
     "tradesviz_sync_dir",
@@ -141,3 +143,9 @@ def notify_webhook_url() -> str | None:
     """Discord or Slack incoming-webhook URL for job notifications, from .env. None if unset."""
     load_dotenv(REPO_ROOT / ".env")
     return os.environ.get("NOTIFY_WEBHOOK_URL")
+
+
+def telegram_credentials() -> tuple[str | None, str | None]:
+    """(bot token, chat id) for Telegram notifications, from .env. Each is None if unset."""
+    load_dotenv(REPO_ROOT / ".env")
+    return os.environ.get("TELEGRAM_BOT_TOKEN") or None, os.environ.get("TELEGRAM_CHAT_ID") or None

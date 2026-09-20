@@ -15,6 +15,8 @@ only be re-exported); exporter exit 3 (a sell without an opening fill needs a de
 adjustments.toml) skips the imports and asks for `toss-export-ghostfolio --interactive`; exit 4
 (holdings mismatch) still imports but is reported. Anything not clean is sent to the webhook
 (jobs/notify.py); --notify-success also sends the daily summary when everything is fine.
+--notify-test sends a test message (and, for Telegram, prints the chat ids that have messaged
+the bot so TELEGRAM_CHAT_ID can be filled in).
 
 Scheduling: deploy/systemd/daily-sync.timer (12:00 KST). A lock file prevents overlapping runs.
 """
@@ -39,7 +41,7 @@ from brokers.toss import config
 from ghostfolio.client import GhostfolioClient, GhostfolioError
 from jobs import notify
 
-__all__ = ["Level", "StepResult", "import_to_ghostfolio", "main", "run_module", "summarize"]
+__all__ = ["Level", "StepResult", "import_to_ghostfolio", "main", "notify_test", "run_module", "summarize"]
 
 log = logging.getLogger("jobs.daily_sync")
 
@@ -181,14 +183,38 @@ def _sync(runner: Runner, *, cash: bool, import_client: GhostfolioClient | None 
     return results
 
 
+def notify_test() -> int:
+    """Send a test notification; help with the Telegram chat id first if it is missing."""
+    token, chat_id = config.telegram_credentials()
+    if token and not chat_id:
+        try:
+            chats = notify.telegram_chat_ids(token)
+        except httpx.HTTPError as e:
+            print(f"Telegram getUpdates failed: {e}")
+            return 1
+        if not chats:
+            print("No chats yet: send any message to the bot in Telegram, then run this again.")
+            return 1
+        print("Chats that messaged the bot; put one in .env as TELEGRAM_CHAT_ID:")
+        for cid, who in chats:
+            print(f"  TELEGRAM_CHAT_ID={cid}    # {who}")
+        return 1
+    ok = notify.send(f"daily-sync test {datetime.now(UTC):%Y-%m-%d %H:%M} UTC ✅")
+    print("sent" if ok else "not sent (see log)")
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None, *, runner: Runner = run_module) -> int:
     p = argparse.ArgumentParser(description="Daily Toss -> Ghostfolio/TradesViz sync")
     p.add_argument("--notify-success", action="store_true", help="also send the summary when everything is fine")
     p.add_argument("--no-notify", action="store_true", help="never send a notification (print only)")
+    p.add_argument("--notify-test", action="store_true", help="send a test notification and exit")
     p.add_argument("--no-cash", action="store_true", help="skip the cash balance update")
     p.add_argument("--lock", type=Path, default=None, help="lock file (default: <db dir>/daily-sync.lock)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=sys.stderr)
+    if args.notify_test:
+        return notify_test()
 
     lock_path = args.lock or config.db_path().parent / "daily-sync.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
