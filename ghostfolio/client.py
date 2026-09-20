@@ -39,7 +39,7 @@ class GhostfolioClient:
 
     def _login(self, access_token: str) -> str:
         resp = self.http.post(f"{self.base_url}/api/v1/auth/anonymous", json={"accessToken": access_token})
-        if resp.status_code != 200:
+        if resp.status_code >= 400:  # NestJS answers POST with 201
             raise GhostfolioError(f"Ghostfolio login failed ({resp.status_code}): check GHOSTFOLIO_ACCESS_TOKEN")
         return resp.json()["authToken"]
 
