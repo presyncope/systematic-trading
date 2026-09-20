@@ -1,7 +1,7 @@
 # systematic-trading
 
-Fetches order history from the Toss Securities Open API, stores it in SQLite, and exports fills
-as TradesViz and Ghostfolio CSVs.
+Fetches order history from the Toss Securities Open API (and, in progress, the KIS Open API),
+stores it in SQLite, and exports fills as TradesViz and Ghostfolio files.
 
 ## Setup
 
@@ -15,6 +15,9 @@ Issue a client under Toss Securities WTS Settings > Open API, and register your 
 - `.env` — credentials only (gitignored)
 - `config.toml` — non-secret settings such as the API base URL, token cache, DB and export paths (`[toss]` section)
 - `data/toss/adjustments.toml` — manual corrections for the exporter (gitignored, see below)
+
+Package layout: `brokers/common/` is broker-neutral (ledger, split detection, adjustments, the export
+pipeline and both exporters); `brokers/toss/` and `brokers/kis/` plug one broker each into it.
 
 ## Usage
 
@@ -40,6 +43,24 @@ uv run toss-export-tradesviz --tz America/New_York       # exchange time instead
 ```
 
 If a backfill is interrupted, re-running with the same options resumes from the last page.
+
+### KIS (한국투자증권)
+
+Under construction: so far the client can authenticate and read balances. Steps: at
+[KIS Developers](https://apiportal.koreainvestment.com) issue a **live-trading** (실전투자) app key for
+the account, put it in `.env` as `KIS_APP_KEY` / `KIS_APP_SECRET` and the account number as
+`KIS_ACCOUNT=12345678-01` (종합계좌번호-계좌상품코드). Overseas endpoints also require the account to
+have 해외증권 거래신청 done.
+
+```bash
+uv run kis-auth                              # issue a token (cached in .kis_token.json, valid for 24h)
+uv run kis-auth --status | --revoke          # cache status / revoke the token early
+uv run python -m brokers.kis.client --probe  # call the domestic + overseas balance APIs once
+```
+
+KIS issues at most one token a day per app key (a repeat request within 6 hours returns the same
+token, more frequent requests are refused), so the cache file is shared by every command. The
+paper-trading domain is not supported; the [kis] section of config.toml points at the live one.
 
 ### What the exporters check
 

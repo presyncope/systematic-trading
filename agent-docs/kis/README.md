@@ -7,6 +7,14 @@
 - 인증(`/oauth2/*`)을 제외한 모든 REST 호출은 `authorization: Bearer <access_token>`, `appkey`, `appsecret`, `tr_id` 헤더 필요 (토큰 발급: [oauth/tokenP.md](oauth/tokenP.md), 웹소켓 접속키: [oauth/Approval.md](oauth/Approval.md))
 - `모의 TR_ID`가 `모의투자 미지원`이면 모의투자 도메인에서 호출 불가
 
+## 이 프로젝트가 쓰는 API (`brokers/kis/`)
+
+| TR_ID | 용도 | 모듈 |
+|---|---|---|
+| `/oauth2/tokenP`, `/oauth2/revokeP` | 접근토큰 발급·폐기 (24h, 6h 이내 재발급은 동일 토큰) | `auth.py` |
+| TTTC8434R | 주식잔고조회 (보유 종목, `output2.dnca_tot_amt` 예수금) | `client.domestic_balance` |
+| TTTS3012R | 해외주식 잔고 (NASD = 미국 전체, USD) | `client.overseas_balance` |
+
 ## OAuth인증
 
 | API 명 | 실전 TR_ID | 모의 TR_ID | Method | URL (→ 문서) |

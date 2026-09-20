@@ -21,18 +21,13 @@ base_url / token_cache path come from the [toss] section of config.toml.
 from __future__ import annotations
 
 import argparse
-import contextlib
-import json
 import logging
-import os
 import sys
-import tempfile
 import time
-from datetime import UTC, datetime
-from pathlib import Path
 
 import httpx
 
+from brokers.common.tokencache import DEFAULT_EXPIRY_MARGIN, TokenCache, fmt_ts
 from brokers.toss import config
 
 __all__ = [
@@ -48,16 +43,14 @@ __all__ = [
 log = logging.getLogger("toss.auth")
 
 TOKEN_PATH = "/oauth2/token"
-# Treat the token as expired this many seconds before actual expiry and re-issue early.
-DEFAULT_EXPIRY_MARGIN = 300
 
 
 class TossAuthError(RuntimeError):
     """Token issuance failed. The message carries the spec's error code and a hint."""
 
 
-def _cache_path() -> Path:
-    return config.token_cache_path()
+def _cache() -> TokenCache:
+    return TokenCache(config.token_cache_path())
 
 
 def _credentials() -> tuple[str, str]:
@@ -68,40 +61,6 @@ def _credentials() -> tuple[str, str]:
             f"Set them in {config.REPO_ROOT / '.env'} (see .env.example)."
         )
     return client_id, client_secret
-
-
-def _read_cache() -> dict | None:
-    path = _cache_path()
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError) as e:
-        log.warning("Ignoring unreadable token cache: %s", e)
-        return None
-    if not isinstance(data, dict) or "access_token" not in data or "expires_at" not in data:
-        return None
-    return data
-
-
-def _write_cache(data: dict) -> None:
-    """Write to a temp file, then swap in with os.replace (atomic), mode 0600."""
-    path = _cache_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tok-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
-
-
-def _fmt_ts(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch, tz=UTC).astimezone().isoformat(timespec="seconds")
 
 
 def _oauth_error_text(resp: httpx.Response) -> str:
@@ -179,8 +138,8 @@ def issue_token(client: httpx.Client | None = None, *, max_retries: int = 3) -> 
         "issued_at": now,
         "expires_at": now + int(body["expires_in"]),
     }
-    _write_cache(token)
-    log.info("Token issued. Expires: %s", _fmt_ts(token["expires_at"]))
+    _cache().write(token)
+    log.info("Token issued. Expires: %s", fmt_ts(token["expires_at"]))
     return token
 
 
@@ -192,32 +151,15 @@ def get_access_token(
 ) -> str:
     """Return a valid access token string. Reuses the cache if valid, otherwise issues a new one."""
     if not force:
-        cached = _read_cache()
-        if cached and cached["expires_at"] - margin > time.time():
+        cached = _cache().valid(margin)
+        if cached:
             return cached["access_token"]
     return issue_token(client)["access_token"]
 
 
 def invalidate_cache() -> None:
     """Delete the cache file (the server-side token stays valid)."""
-    with contextlib.suppress(FileNotFoundError):
-        _cache_path().unlink()
-
-
-def _print_status() -> int:
-    cached = _read_cache()
-    path = _cache_path()
-    if not cached:
-        print(f"No cache: {path}")
-        return 1
-    remaining = cached["expires_at"] - time.time()
-    state = "valid" if remaining > DEFAULT_EXPIRY_MARGIN else ("expiring soon" if remaining > 0 else "expired")
-    print(f"Cache file : {path}")
-    print(f"Issued at  : {_fmt_ts(cached['issued_at'])}")
-    print(f"Expires at : {_fmt_ts(cached['expires_at'])}")
-    print(f"Remaining  : {int(remaining)}s ({state})")
-    print(f"Token      : {cached['access_token'][:12]}… (length {len(cached['access_token'])})")
-    return 0
+    _cache().clear()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -239,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger("httpx").setLevel(logging.WARNING)
 
     if args.status:
-        return _print_status()
+        return _cache().print_status()
 
     try:
         token = get_access_token(force=args.force)
@@ -250,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.print_token:
         print(token)
     else:
-        _print_status()
+        _cache().print_status()
     return 0
 
 

@@ -70,7 +70,7 @@ Avoid `yfinance` for anything beyond prototyping.
 ### 1.6 Broker APIs
 
 - **Toss Securities Open API** — primary integration target. OAuth2 client credentials, base URL `https://openapi.tossinvest.com`, docs at `developers.tossinvest.com`. Account, holdings, and order queries require the `X-Tossinvest-Account` header. No official SDK — generate a client from the OpenAPI spec. Rollout is staged; general-availability date and history depth are unverified, so validate history depth first before building on it.
-- **KIS Developers** — secondary and a known-good fallback. Free REST + websocket. Overseas base path `uapi/overseas-stock/v1/trading/`; fills, daily transactions, and period P&L endpoints exist. Use **python-kis** (v2.1.6) — unified domestic/overseas interface, period P&L and daily fills, auto-reconnecting websocket.
+- **KIS Developers** — secondary and a known-good fallback. Free REST + websocket. Overseas base path `uapi/overseas-stock/v1/trading/`; fills, daily transactions, and period P&L endpoints exist. Implemented directly (`brokers/kis/`, docs in `agent-docs/kis/`) rather than via python-kis: fills and fees live on different endpoints that the library does not join, it still uses TR_IDs the docs mark as deprecated, and a v3 rewrite is pending.
 - Do **not** use unofficial scraping or session reuse — ToS and blocking risk.
 
 ---
