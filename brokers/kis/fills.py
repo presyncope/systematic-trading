@@ -23,26 +23,45 @@ the last order so the group's fees add up exactly.
 Timestamps: ord_dt is the exchange-local session date (KIS states it, so it goes straight into
 Fill.trading_date); dmst_ord_dt + thco_ord_tmd is the KST order-acceptance time, the closest
 thing to a fill time the API offers.
+
+Domestic: TTTC0081R/CTSC9215R (orders) likewise carry no fees; TTTC8715R has one row per (trade
+date, symbol) with that day's commission (buys and sells together) and transaction taxes (sells
+only). The commission is spread over every order of the day in the symbol and the tax over the
+sells, both in proportion to the order amount. The same flags apply (a daily-P&L row with no
+orders becomes a synthetic fill at the 15:30 KST close). Everything is KRW; ord_dt + ord_tmd is
+KST and is also the session date.
 """
 
 from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, datetime, time
 from decimal import ROUND_HALF_EVEN, Decimal
 from zoneinfo import ZoneInfo
 
 from brokers.common.ledger import CLOSE_HOUR, ET
-from brokers.kis.store import FillRow
+from brokers.kis.store import FillRow, short_code
 
-__all__ = ["FEE_PLACES", "KST", "join_overseas", "kst_timestamp", "session_close_kst", "ticker_aliases"]
+__all__ = [
+    "FEE_PLACES",
+    "KRW_PLACES",
+    "KRX_CLOSE",
+    "KST",
+    "join_domestic",
+    "join_overseas",
+    "kst_timestamp",
+    "session_close_kst",
+    "ticker_aliases",
+]
 
 log = logging.getLogger("kis.fills")
 
 KST = ZoneInfo("Asia/Seoul")
+KRX_CLOSE = "153000"
 FEE_PLACES = 4
-_FEE_QUANTUM = Decimal(1).scaleb(-FEE_PLACES)
+KRW_PLACES = 0  # KRW fees are whole won
 
 
 def kst_timestamp(yyyymmdd: str, hhmmss: str) -> str:
@@ -66,15 +85,16 @@ def _strip(d: Decimal) -> Decimal:
     return Decimal(s)
 
 
-def _allocate(total: Decimal, weights: list[Decimal]) -> list[Decimal]:
-    """Split `total` in proportion to `weights`, rounded to FEE_PLACES, remainder on the last item."""
+def _allocate(total: Decimal, weights: list[Decimal], places: int = FEE_PLACES) -> list[Decimal]:
+    """Split `total` in proportion to `weights`, rounded to `places` decimals, remainder on the last item."""
     if not weights:
         return []
     denom = sum(weights)
     if denom == 0:  # no amounts to weigh by: equal shares
         weights = [Decimal(1)] * len(weights)
         denom = Decimal(len(weights))
-    parts = [(total * w / denom).quantize(_FEE_QUANTUM, ROUND_HALF_EVEN) for w in weights[:-1]]
+    quantum = Decimal(1).scaleb(-places)
+    parts = [(total * w / denom).quantize(quantum, ROUND_HALF_EVEN) for w in weights[:-1]]
     parts.append(total - sum(parts, Decimal(0)))
     return parts
 
@@ -100,6 +120,19 @@ def ticker_aliases(trans: list[dict]) -> tuple[dict[str, str], dict[str, str]]:
                 aliases[old] = current
                 log.info("%s: ticker %s is now %s (ISIN %s); fills renamed", current, old, current, isin)
     return aliases, isin_of
+
+
+def _unique_ids(rows: list[FillRow]) -> list[FillRow]:
+    """odno is a sequence within the KST order day: when one recurs on another KST day, suffix those
+    ids with @<KST date>. (Two KST days can share a US session date, so the session date cannot be the
+    discriminator.)"""
+    seen: dict[str, set[str]] = defaultdict(set)
+    for r in rows:
+        seen[r.fill_id].add(r.filled_at[:10])
+    dupes = {fid for fid, days in seen.items() if len(days) > 1}
+    if not dupes:
+        return rows
+    return [replace(r, fill_id=f"{r.fill_id}@{r.filled_at[:10]}") if r.fill_id in dupes else r for r in rows]
 
 
 def join_overseas(orders: list[dict], trans: list[dict]) -> list[FillRow]:
@@ -192,4 +225,97 @@ def join_overseas(orders: list[dict], trans: list[dict]) -> list[FillRow]:
                 )
             )
     out.sort(key=lambda f: (f.filled_at, f.fill_id))
-    return out
+    return _unique_ids(out)
+
+
+def join_domestic(orders: list[dict], daily_pl: list[dict]) -> list[FillRow]:
+    """Rows of the domestic_orders and domestic_daily_pl tables -> fills, oldest first."""
+    by_key_orders: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for o in orders:
+        if Decimal(o["ccld_qty"]) > 0 and o["side"] in ("BUY", "SELL"):
+            by_key_orders[(o["ord_dt"], short_code(o["pdno"]))].append(o)
+    by_key_pl: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for r in daily_pl:
+        by_key_pl[(r["trad_dt"], short_code(r["pdno"]))].append(r)
+
+    out: list[FillRow] = []
+    for key in sorted(set(by_key_orders) | set(by_key_pl)):
+        trad_dt, pdno = key
+        group_orders = by_key_orders.get(key, [])
+        group_pl = by_key_pl.get(key, [])
+        fee = sum((Decimal(r["fee"]) for r in group_pl), Decimal(0))
+        tax = sum((Decimal(r["tl_tax"]) for r in group_pl), Decimal(0))
+        session = _date(trad_dt)
+
+        if not group_orders:
+            sides = []
+            for side, qty_col, amt_col in (("BUY", "buy_qty", "buy_amt"), ("SELL", "sll_qty", "sll_amt")):
+                qty = sum((Decimal(r[qty_col]) for r in group_pl), Decimal(0))
+                amount = sum((Decimal(r[amt_col]) for r in group_pl), Decimal(0))
+                if qty > 0:
+                    sides.append((side, qty, amount))
+            fees = _allocate(fee, [amount for _, _, amount in sides], KRW_PLACES)
+            for (side, qty, amount), side_fee in zip(sides, fees, strict=True):
+                price = _strip((amount / qty).quantize(Decimal("0.01")))
+                log.warning("%s %s %s %s @ %s has no order: synthetic fill", trad_dt, side, pdno, qty, price)
+                out.append(
+                    FillRow(
+                        fill_id=f"pl:{trad_dt}:{pdno}:{side}",
+                        market="domestic",
+                        symbol=pdno,
+                        side=side,
+                        quantity=_strip(qty),
+                        price=price,
+                        currency="KRW",
+                        filled_at=kst_timestamp(trad_dt, KRX_CLOSE),
+                        trading_date=session,
+                        commission=_strip(side_fee),
+                        tax=tax if side == "SELL" else Decimal(0),
+                        source="pl",
+                        flags=("synthetic",),
+                    )
+                )
+            continue
+
+        flags: list[str] = []
+        if not group_pl:
+            flags.append("unsettled")
+        else:
+            for side, col in (("BUY", "buy_qty"), ("SELL", "sll_qty")):
+                order_qty = sum((Decimal(o["ccld_qty"]) for o in group_orders if o["side"] == side), Decimal(0))
+                pl_qty = sum((Decimal(r[col]) for r in group_pl), Decimal(0))
+                if order_qty != pl_qty:
+                    log.warning(
+                        "%s %s %s: orders filled %s but the daily P&L shows %s; fees spread over the orders anyway",
+                        trad_dt,
+                        side,
+                        pdno,
+                        order_qty,
+                        pl_qty,
+                    )
+                    if "qty_mismatch" not in flags:
+                        flags.append("qty_mismatch")
+        amounts = [Decimal(o["ccld_qty"]) * Decimal(o["avg_prvs"]) for o in group_orders]
+        fees = _allocate(fee, amounts, KRW_PLACES)
+        sell_amounts = [a for o, a in zip(group_orders, amounts, strict=True) if o["side"] == "SELL"]
+        taxes = iter(_allocate(tax, sell_amounts, KRW_PLACES))
+        for o, c in zip(group_orders, fees, strict=True):
+            out.append(
+                FillRow(
+                    fill_id=o["odno"],
+                    market="domestic",
+                    symbol=pdno,
+                    side=o["side"],
+                    quantity=_strip(Decimal(o["ccld_qty"])),
+                    price=_strip(Decimal(o["avg_prvs"])),
+                    currency="KRW",
+                    filled_at=kst_timestamp(o["ord_dt"], o["ord_tmd"]),
+                    trading_date=session,
+                    commission=_strip(c),
+                    tax=_strip(next(taxes)) if o["side"] == "SELL" else Decimal(0),
+                    source="order",
+                    flags=tuple(flags),
+                )
+            )
+    out.sort(key=lambda f: (f.filled_at, f.fill_id))
+    return _unique_ids(out)

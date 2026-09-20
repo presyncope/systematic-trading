@@ -16,6 +16,9 @@
 | TTTS3012R | 해외주식 잔고 (NASD = 미국 전체, USD) | `client.overseas_balance` |
 | TTTS3035R | 해외주식 주문체결내역 — 체결만(`CCLD_NCCS_DVSN=01`), 정순. `ord_dt`=현지 거래일, `dmst_ord_dt`+`thco_ord_tmd`=KST 접수시각. 수수료 없음, 소수점 체결 제외. 2015~ 전체 범위 한 번에 조회됨 | `client.overseas_orders` |
 | CTOS4001R | 해외주식 일별거래내역 — (거래일, 종목, side) 단위 집계, `dmst_frcr_fee1`(국내수수료)·`frcr_fee1`(해외제비용)·`std_pdno`(ISIN) | `client.overseas_trans` |
+| TTTC0081R / CTSC9215R | 주식일별주문체결조회 — 체결만(`CCLD_DVSN=01`), 정순, `EXCG_ID_DVSN_CD=ALL`. 실측: 신 TR은 3개월 넘는 범위를 주면 일부 행을 조용히 빠뜨림 → 3개월 이전은 구 TR(범위 1년 이내, `APBK1633`)로. 수수료 없음 | `client.domestic_orders` |
+| TTTC8715R | 기간별매매손익현황조회 — (거래일, 종목) 한 행에 매수·매도 합산, `fee`(수수료)·`tl_tax`(제세금). 범위 10년 이내. 실측 pdno는 6자리(문서 예제는 12자리) | `client.domestic_trade_profit` |
+| CTPF1002R | 주식기본조회 — `mket_id_cd` STK/KSQ, `std_pdno` ISIN, `prdt_name` → instruments/Yahoo 심볼 | `client.stock_info` |
 
 ## OAuth인증
 

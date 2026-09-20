@@ -46,7 +46,7 @@ If a backfill is interrupted, re-running with the same options resumes from the 
 
 ### KIS (한국투자증권)
 
-Under construction: overseas (US) fills are stored; exporters, domestic fills and rights follow.
+Under construction: overseas (US) and domestic (KRX) fills are stored; exporters and rights follow.
 Setup: at [KIS Developers](https://apiportal.koreainvestment.com) issue a **live-trading** (실전투자) app
 key for the account, put it in `.env` as `KIS_APP_KEY` / `KIS_APP_SECRET` and the account number as
 `KIS_ACCOUNT=12345678-01` (종합계좌번호-계좌상품코드). Overseas endpoints also require the account to
@@ -56,7 +56,8 @@ have 해외증권 거래신청 done.
 uv run kis-auth                              # issue a token (cached in .kis_token.json, valid for 24h)
 uv run kis-auth --status | --revoke          # cache status / revoke the token early
 uv run python -m brokers.kis.client --probe  # call the domestic + overseas balance APIs once
-uv run kis-backfill                          # overseas fills → data/kis/kis.sqlite (incremental)
+uv run kis-backfill                          # overseas + domestic fills → data/kis/kis.sqlite (incremental)
+uv run kis-backfill --market domestic        # one market only
 uv run kis-backfill --restart                # the whole history again
 ```
 
@@ -69,6 +70,12 @@ synthetic fill at the session close; orders without a transaction row yet are st
 and flagged `unsettled` until the next run (every run re-fetches the last 45 days). A ticker change
 is recognised from the ISIN on the transaction rows and the earlier fills are renamed to the current
 ticker. KIS reports the order-acceptance time, not the fill time, so that is what `filled_at` holds.
+
+Domestic fills work the same way with TTTC0081R (orders of the last three months) / CTSC9215R (older,
+fetched in chunks of a year) and TTTC8715R, which has one row per trade date and symbol with the
+day's commission (spread over that day's orders in the symbol, whole won) and transaction taxes
+(spread over the sells). CTPF1002R is called once per symbol to learn its market, which gives the
+Yahoo symbol (`005930.KS`, `440110.KQ`) the Ghostfolio export needs.
 
 KIS issues at most one token a day per app key (a repeat request within 6 hours returns the same
 token, more frequent requests are refused), so the cache file is shared by every command. The

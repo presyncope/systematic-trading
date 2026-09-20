@@ -255,6 +255,59 @@ class KisClient:
         pages = self.paged("/uapi/overseas-stock/v1/trading/inquire-period-trans", tr_id="CTOS4001R", params=params)
         return [r for p in pages for r in (p.get("output1") or [])]
 
+    def domestic_orders(self, account: Account, start: str, end: str, *, recent: bool) -> list[dict]:
+        """주식일별주문체결조회, filled orders only (CCLD_DVSN=01), every exchange (KRX/NXT/SOR), oldest first.
+        recent=True uses TTTC0081R (orders within the last three months), False CTSC9215R (older; the
+        range must be one year or less). Live check: the recent TR silently drops some older rows when
+        asked for a long range, so the split matters."""
+        cano, prdt = account
+        params = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": prdt,
+            "INQR_STRT_DT": start,
+            "INQR_END_DT": end,
+            "SLL_BUY_DVSN_CD": "00",
+            "PDNO": "",
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+            "CCLD_DVSN": "01",
+            "INQR_DVSN": "01",
+            "INQR_DVSN_1": "",
+            "INQR_DVSN_3": "00",
+            "EXCG_ID_DVSN_CD": "ALL",
+        }
+        tr_id = "TTTC0081R" if recent else "CTSC9215R"
+        pages = self.paged("/uapi/domestic-stock/v1/trading/inquire-daily-ccld", tr_id=tr_id, params=params)
+        return [r for p in pages for r in (p.get("output1") or [])]
+
+    def domestic_trade_profit(self, account: Account, start: str, end: str) -> list[dict]:
+        """기간별매매손익현황조회 TTTC8715R: one row per (trade date, symbol) with the day's fee and tax.
+        The range must be ten years or less. output1 rows; output2 (totals) is dropped."""
+        cano, prdt = account
+        params = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": prdt,
+            "PDNO": "",
+            "INQR_STRT_DT": start,
+            "INQR_END_DT": end,
+            "SORT_DVSN": "01",
+            "CBLC_DVSN": "00",
+        }
+        pages = self.paged(
+            "/uapi/domestic-stock/v1/trading/inquire-period-trade-profit", tr_id="TTTC8715R", params=params
+        )
+        return [r for p in pages for r in (p.get("output1") or [])]
+
+    def stock_info(self, pdno: str) -> dict:
+        """주식기본조회 CTPF1002R for a KRX code: prdt_name, mket_id_cd (STK/KSQ), std_pdno (ISIN), ..."""
+        resp = self.request(
+            "GET",
+            "/uapi/domestic-stock/v1/quotations/search-stock-info",
+            tr_id="CTPF1002R",
+            params={"PRDT_TYPE_CD": "300", "PDNO": pdno},
+        )
+        return resp.body.get("output") or {}
+
 
 # --- CLI: connectivity probe ---------------------------------------------------
 
