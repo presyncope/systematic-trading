@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 import httpx
@@ -172,6 +173,11 @@ class TossClient:
     def get_holdings(self, account_seq: int) -> dict:
         """HoldingsOverview: totals plus items[] (symbol, quantity, currency, name, ...)."""
         return self.request("GET", "/api/v1/holdings", account_seq=account_seq)["result"]
+
+    def get_buying_power(self, account_seq: int, currency: str) -> Decimal:
+        """Cash available for buying without margin, i.e. the cash balance (matches the app)."""
+        result = self.request("GET", "/api/v1/buying-power", params={"currency": currency}, account_seq=account_seq)
+        return Decimal(result["result"]["cashBuyingPower"])
 
     def get_stocks(self, symbols: list[str]) -> list[dict]:
         """StockInfo[] for up to 200 symbols (listDate, delistDate, status, ...)."""

@@ -8,3 +8,6 @@ db = "data/toss/orders.sqlite"
 tradesviz_csv = "data/toss/tradesviz_executions.csv"
 ghostfolio_json = "data/toss/ghostfolio_activities.json"
 adjustments = "data/toss/adjustments.toml"   # manual corrections, see brokers/toss/adjustments.py
+
+[ghostfolio]
+url = "http://100.104.205.124:3333"   # the address deploy/ghostfolio publishes on

@@ -100,8 +100,13 @@ only JSON keeps the fill timestamps: with date-only rows Ghostfolio processes sa
 sells in random order and day trades turn into phantom gains. Quantities are in today's share
 basis, which is what Ghostfolio's Yahoo-based valuation needs. Later runs:
 `uv run toss-export-ghostfolio --from YYYY-MM-DD` for just the new sessions (a full re-export works
-too, Ghostfolio flags the rows it already has as duplicates). Dividends and cash movements are not
-in the Toss API; add them in Ghostfolio by hand.
+too, Ghostfolio flags the rows it already has as duplicates). Dividends are not in the Toss API;
+add them in Ghostfolio by hand.
+
+`--cash` also records today's USD cash balance on the account (Toss buying power, which matches
+the app). The import ignores balances of an existing account, so this uses Ghostfolio's API:
+put the security token in `.env` as `GHOSTFOLIO_ACCESS_TOKEN` and the instance URL in `config.toml`
+(`[ghostfolio] url`).
 
 ## Notes
 

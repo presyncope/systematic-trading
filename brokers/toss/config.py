@@ -1,7 +1,8 @@
 """Settings loading: secrets from .env, everything else from config.toml.
 
-- .env            : TOSS_CLIENT_ID / TOSS_CLIENT_SECRET (gitignored)
-- config.toml     : non-secret settings such as base_url, token_cache, db, export paths (committed)
+- .env            : TOSS_CLIENT_ID / TOSS_CLIENT_SECRET, GHOSTFOLIO_ACCESS_TOKEN (gitignored)
+- config.toml     : non-secret settings: [toss] base_url, token_cache, db, export paths;
+                    [ghostfolio] url (committed)
 
 Both are located from the repo root, independent of cwd.
 """
@@ -22,7 +23,9 @@ __all__ = [
     "base_url",
     "credentials",
     "db_path",
+    "ghostfolio_access_token",
     "ghostfolio_json_path",
+    "ghostfolio_url",
     "load",
     "token_cache_path",
     "tradesviz_csv_path",
@@ -41,18 +44,25 @@ DEFAULTS: dict[str, str] = {
     "adjustments": "data/toss/adjustments.toml",
 }
 
+GHOSTFOLIO_DEFAULTS: dict[str, str] = {"url": "http://127.0.0.1:3333"}
+
 _settings: dict[str, str] = {}
+_ghostfolio: dict[str, str] = {}
 
 
 def load(path: Path | None = None) -> dict[str, str]:
-    """Read the [toss] section of config.toml over DEFAULTS. Falls back to DEFAULTS if the file is missing."""
-    global _settings
+    """Read config.toml: [toss] over DEFAULTS, [ghostfolio] over GHOSTFOLIO_DEFAULTS.
+    Falls back to the defaults if the file is missing. Returns the [toss] settings."""
+    global _settings, _ghostfolio
     path = path or CONFIG_PATH
     merged = dict(DEFAULTS)
+    gf = dict(GHOSTFOLIO_DEFAULTS)
     if path.exists():
         with path.open("rb") as f:
-            merged.update(tomllib.load(f).get("toss", {}))
-    _settings = merged
+            doc = tomllib.load(f)
+        merged.update(doc.get("toss", {}))
+        gf.update(doc.get("ghostfolio", {}))
+    _settings, _ghostfolio = merged, gf
     return _settings
 
 
@@ -95,3 +105,15 @@ def credentials() -> tuple[str | None, str | None]:
     """Load .env and return (client_id, client_secret). Each is None if unset."""
     load_dotenv(REPO_ROOT / ".env")
     return os.environ.get("TOSS_CLIENT_ID"), os.environ.get("TOSS_CLIENT_SECRET")
+
+
+def ghostfolio_url() -> str:
+    if not _ghostfolio:
+        load()
+    return _ghostfolio["url"].rstrip("/")
+
+
+def ghostfolio_access_token() -> str | None:
+    """The security token Ghostfolio showed at first login, from .env. None if unset."""
+    load_dotenv(REPO_ROOT / ".env")
+    return os.environ.get("GHOSTFOLIO_ACCESS_TOKEN")

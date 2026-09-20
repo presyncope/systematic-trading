@@ -30,8 +30,15 @@ quantity, price, fee and comment all match an existing one, so re-importing the 
 adds what is new. --from YYYY-MM-DD exports only sessions on or after that date instead.
 Dividends, deposits and withdrawals are not in the Toss API; add them in Ghostfolio by hand.
 
+--cash also records today's USD cash balance (GET /api/v1/buying-power, which matches the app)
+on the Ghostfolio account. The import ignores balances for an account that already exists, so
+this goes through Ghostfolio's API (POST /api/v1/account-balance) and needs [ghostfolio] url in
+config.toml and GHOSTFOLIO_ACCESS_TOKEN in .env. The balance is also written into the file, which
+covers the case where the import creates the account.
+
 Usage:
     uv run toss-export-ghostfolio                       # USD fills -> data/toss/ghostfolio_activities.json
+    uv run toss-export-ghostfolio --cash                # ...and push today's cash balance to Ghostfolio
     uv run toss-export-ghostfolio --from 2026-09-18     # only newer sessions
     uv run toss-export-ghostfolio --account "Toss US"   # book into a differently named account
     uv run toss-export-ghostfolio --offline             # stored splits only, no API calls
@@ -49,8 +56,10 @@ from decimal import Decimal
 from pathlib import Path
 
 from brokers.toss import config, pipeline
+from brokers.toss.client import TossClient
 from brokers.toss.ledger import AdjustedFill
 from brokers.toss.pipeline import Prepared
+from ghostfolio.client import GhostfolioClient, GhostfolioError
 
 __all__ = [
     "ACCOUNT_NAMESPACE",
@@ -60,6 +69,7 @@ __all__ = [
     "account_id",
     "export_json",
     "main",
+    "push_cash_balance",
     "to_activity",
 ]
 
@@ -74,6 +84,10 @@ ACCOUNT_NAMESPACE = uuid.UUID("6f1c2a7e-9b1d-4c0e-8f3a-2d5b7e9c1a44")
 
 def account_id(name: str) -> str:
     return str(uuid.uuid5(ACCOUNT_NAMESPACE, name))
+
+
+def _midnight(on: date) -> str:
+    return f"{on.isoformat()}T00:00:00.000Z"
 
 
 def _utc_iso(filled_at: str) -> str:
@@ -98,13 +112,21 @@ def to_activity(af: AdjustedFill, account: str, *, with_order_id: bool = False) 
 
 
 def export_json(
-    fills: list[AdjustedFill], out: Path, account: str, *, currency: str, with_order_id: bool = False
+    fills: list[AdjustedFill],
+    out: Path,
+    account: str,
+    *,
+    currency: str,
+    with_order_id: bool = False,
+    cash: Decimal | None = None,
 ) -> pipeline.ExportResult:
+    now = datetime.now(UTC)
+    balances = [{"date": _midnight(now.date()), "value": float(cash)}] if cash is not None else []
     doc = {
-        "meta": {"date": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"), "version": "dev"},
+        "meta": {"date": now.isoformat(timespec="milliseconds").replace("+00:00", "Z"), "version": "dev"},
         "accounts": [
             {
-                "balances": [],
+                "balances": balances,
                 "comment": None,
                 "currency": currency,
                 "id": account_id(account),
@@ -119,6 +141,26 @@ def export_json(
         json.dump(doc, f, indent=1)
         f.write("\n")
     return pipeline.ExportResult(rows=len(doc["activities"]), path=out)
+
+
+def push_cash_balance(account: str, cash: Decimal, on: date) -> bool:
+    """Record `cash` as the account's balance for `on` via the Ghostfolio API. False if not configured."""
+    token = config.ghostfolio_access_token()
+    if not token:
+        log.warning("GHOSTFOLIO_ACCESS_TOKEN is not set in .env; cash balance not pushed to Ghostfolio")
+        return False
+    try:
+        with GhostfolioClient(config.ghostfolio_url(), token) as gf:
+            acct = gf.account_by_name(account)
+            if not acct:
+                log.warning("Ghostfolio has no account named %r; create it first. Cash balance not pushed", account)
+                return False
+            gf.set_cash_balance(acct["id"], cash, on)
+    except (GhostfolioError, OSError) as e:
+        log.warning("Cash balance not pushed to Ghostfolio: %s", e)
+        return False
+    log.info("Ghostfolio account %r cash balance set to %s for %s", account, cash, on)
+    return True
 
 
 def _iso_date(s: str) -> date:
@@ -141,18 +183,26 @@ def main(argv: list[str] | None = None) -> int:
         help="only fills whose session date is on or after this date (YYYY-MM-DD, exchange local)",
     )
     p.add_argument("--with-order-id", action="store_true", help="put toss:<orderId> in each activity's comment")
+    p.add_argument(
+        "--cash", action="store_true", help="record today's cash balance (buying power) on the Ghostfolio account"
+    )
     args = p.parse_args(argv)
     out: Path = args.out or config.ghostfolio_json_path()
+    if args.cash and args.offline:
+        p.error("--cash needs the Toss API; drop --offline")
 
-    def write(prepared: Prepared) -> pipeline.ExportResult:
+    def write(prepared: Prepared, client: TossClient | None) -> pipeline.ExportResult:
         fills = prepared.fills
         if args.from_date:
             fills = [f for f in fills if f.trading_date >= args.from_date]
-        if prepared.currency != "USD":
+        currency = prepared.currency or "USD"
+        if currency != "USD":
             log.warning("Symbols are written as-is; non-US tickers may need Yahoo suffixes (e.g. 005930.KS)")
-        result = export_json(
-            fills, out, args.account, currency=prepared.currency or "USD", with_order_id=args.with_order_id
-        )
+        cash = client.get_buying_power(prepared.account_seq, currency) if args.cash and client else None
+        result = export_json(fills, out, args.account, currency=currency, with_order_id=args.with_order_id, cash=cash)
+        if cash is not None:
+            log.info("Cash balance (%s buying power): %s", currency, cash)
+            push_cash_balance(args.account, cash, datetime.now(UTC).date())
         if fills:
             log.info(
                 "Wrote %d activities (%s ~ %s, %s, %d excluded%s) -> %s",

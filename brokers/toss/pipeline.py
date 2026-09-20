@@ -9,6 +9,8 @@ product, so it lives here; an exporter supplies argparse extras and a `write` fu
     args = p.parse_args(argv)
     return pipeline.run(args, target="tradesviz", product="TradesViz", write=my_write)
 
+    def my_write(prepared: Prepared, client: TossClient | None) -> ExportResult: ...
+
 Exit codes: 0 ok / 1 nothing to export or API error / 2 auth or config error /
 3 undecided findings (nothing written) / 4 holdings mismatch (file written).
 """
@@ -297,9 +299,10 @@ def run(
     *,
     target: str,
     product: str,
-    write: Callable[[Prepared], ExportResult],
+    write: Callable[[Prepared, TossClient | None], ExportResult],
 ) -> int:
-    """Run the whole export. `write` turns the prepared fills into the product's file."""
+    """Run the whole export. `write` turns the prepared fills into the product's file; it gets the
+    Toss client (None with --offline) for anything else it wants to look up."""
     _setup_logging(args.verbose)
     currency = None if args.currency.upper() == "ALL" else args.currency.upper()
     adj_path = args.adjustments or config.adjustments_path()
@@ -330,7 +333,7 @@ def run(
                 interactive=args.interactive,
             )
             _warn_stale_rows(store, prepared.fills, target, product)
-            result = write(prepared)
+            result = write(prepared, client)
             store.record_export(target, result.rows)
             if client:
                 holdings = client.get_holdings(prepared.account_seq).get("items") or []

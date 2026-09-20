@@ -61,6 +61,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from brokers.toss import config, pipeline
+from brokers.toss.client import TossClient
 from brokers.toss.ledger import AdjustedFill
 from brokers.toss.pipeline import Prepared
 
@@ -147,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     tz: ZoneInfo = args.tz  # argparse runs type= on the string default too
     out: Path = args.out or config.tradesviz_csv_path()
 
-    def write(prepared: Prepared) -> pipeline.ExportResult:
+    def write(prepared: Prepared, _client: TossClient | None) -> pipeline.ExportResult:
         result = export_csv(prepared.fills, out, tz)
         fills = prepared.fills
         log.info(
