@@ -1,0 +1,11 @@
+# systemd --user unit. Install:
+#   ln -sf "$PWD/deploy/systemd/daily-sync.service" "$PWD/deploy/systemd/daily-sync.timer" ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now daily-sync.timer
+#   sudo loginctl enable-linger $USER      # once, so the timer also runs when you are not logged in
+[Unit]
+Description=Toss -> Ghostfolio/TradesViz daily sync
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/repos/systematic-trading
+ExecStart=%h/repos/systematic-trading/deploy/bin/daily-sync.sh

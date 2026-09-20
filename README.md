@@ -108,6 +108,32 @@ the app). The import ignores balances of an existing account, so this uses Ghost
 put the security token in `.env` as `GHOSTFOLIO_ACCESS_TOKEN` and the instance URL in `config.toml`
 (`[ghostfolio] url`).
 
+## Daily sync (automation)
+
+`daily-sync` runs the whole chain once a day: backfill → `toss-export-ghostfolio --cash` →
+Ghostfolio API import (dry run first; only new activities are created) → `toss-export-tradesviz`
+(copied to `[tradesviz] sync_dir` if set, e.g. a Google Drive folder TradesViz auto-syncs from).
+Anything that is not clean is posted to `NOTIFY_WEBHOOK_URL` (Discord or Slack incoming webhook,
+in `.env`); `--notify-success` also posts the daily summary.
+
+```bash
+deploy/bin/daily-sync.sh                 # run now; log in data/logs/daily-sync.log
+uv run daily-sync --no-notify            # print only
+```
+
+Scheduled with a systemd user timer at 12:00 KST (`deploy/systemd/`):
+
+```bash
+ln -sf "$PWD"/deploy/systemd/daily-sync.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now daily-sync.timer
+sudo loginctl enable-linger "$USER"      # once: keep user timers running without a login session
+systemctl --user list-timers daily-sync.timer
+```
+
+Exit 3 from an exporter (a sell without an opening fill) stops the imports until you record a
+decision with `uv run toss-export-ghostfolio --interactive`; exit 4 (holdings mismatch) still
+imports but is reported every day until resolved.
+
 ## Notes
 
 - Toss API spec: `agent-docs/toss/openapi.json`

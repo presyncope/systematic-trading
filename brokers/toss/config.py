@@ -1,8 +1,8 @@
 """Settings loading: secrets from .env, everything else from config.toml.
 
-- .env            : TOSS_CLIENT_ID / TOSS_CLIENT_SECRET, GHOSTFOLIO_ACCESS_TOKEN (gitignored)
+- .env            : TOSS_CLIENT_ID / TOSS_CLIENT_SECRET, GHOSTFOLIO_ACCESS_TOKEN, NOTIFY_WEBHOOK_URL (gitignored)
 - config.toml     : non-secret settings: [toss] base_url, token_cache, db, export paths;
-                    [ghostfolio] url (committed)
+                    [ghostfolio] url; [tradesviz] sync_dir (committed)
 
 Both are located from the repo root, independent of cwd.
 """
@@ -27,8 +27,11 @@ __all__ = [
     "ghostfolio_json_path",
     "ghostfolio_url",
     "load",
+    "notify_webhook_url",
+    "section",
     "token_cache_path",
     "tradesviz_csv_path",
+    "tradesviz_sync_dir",
 ]
 
 # brokers/toss/config.py -> parents[2] == repo root
@@ -48,22 +51,31 @@ GHOSTFOLIO_DEFAULTS: dict[str, str] = {"url": "http://127.0.0.1:3333"}
 
 _settings: dict[str, str] = {}
 _ghostfolio: dict[str, str] = {}
+_doc: dict = {}
 
 
 def load(path: Path | None = None) -> dict[str, str]:
-    """Read config.toml: [toss] over DEFAULTS, [ghostfolio] over GHOSTFOLIO_DEFAULTS.
-    Falls back to the defaults if the file is missing. Returns the [toss] settings."""
-    global _settings, _ghostfolio
+    """Read config.toml: [toss] over DEFAULTS, [ghostfolio] over GHOSTFOLIO_DEFAULTS, other sections
+    as-is. Falls back to the defaults if the file is missing. Returns the [toss] settings."""
+    global _settings, _ghostfolio, _doc
     path = path or CONFIG_PATH
     merged = dict(DEFAULTS)
     gf = dict(GHOSTFOLIO_DEFAULTS)
+    doc: dict = {}
     if path.exists():
         with path.open("rb") as f:
             doc = tomllib.load(f)
         merged.update(doc.get("toss", {}))
         gf.update(doc.get("ghostfolio", {}))
-    _settings, _ghostfolio = merged, gf
+    _settings, _ghostfolio, _doc = merged, gf, doc
     return _settings
+
+
+def section(name: str) -> dict:
+    """A raw section of config.toml ({} if absent)."""
+    if not _settings:
+        load()
+    return dict(_doc.get(name, {}))
 
 
 def _get(key: str) -> str:
@@ -117,3 +129,15 @@ def ghostfolio_access_token() -> str | None:
     """The security token Ghostfolio showed at first login, from .env. None if unset."""
     load_dotenv(REPO_ROOT / ".env")
     return os.environ.get("GHOSTFOLIO_ACCESS_TOKEN")
+
+
+def tradesviz_sync_dir() -> Path | None:
+    """Folder the TradesViz CSV is copied to (e.g. a Google Drive sync folder). None if unset."""
+    value = section("tradesviz").get("sync_dir")
+    return _resolve(value) if value else None
+
+
+def notify_webhook_url() -> str | None:
+    """Discord or Slack incoming-webhook URL for job notifications, from .env. None if unset."""
+    load_dotenv(REPO_ROOT / ".env")
+    return os.environ.get("NOTIFY_WEBHOOK_URL")

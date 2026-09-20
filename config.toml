@@ -11,3 +11,6 @@ adjustments = "data/toss/adjustments.toml"   # manual corrections, see brokers/t
 
 [ghostfolio]
 url = "http://100.104.205.124:3333"   # the address deploy/ghostfolio publishes on
+
+[tradesviz]
+sync_dir = ""   # optional: folder the CSV is copied to by daily-sync (e.g. a Google Drive sync folder)

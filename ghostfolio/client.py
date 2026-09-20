@@ -2,7 +2,7 @@
 
 Auth: the security token shown once at "Get Started" is exchanged for a JWT via
 POST /api/v1/auth/anonymous; every other call sends it as a Bearer token.
-Endpoints used (3.71.0): GET /api/v1/account, POST /api/v1/account-balance.
+Endpoints used (3.71.0): GET /api/v1/account, POST /api/v1/account-balance, POST /api/v1/import.
 """
 
 from __future__ import annotations
@@ -56,6 +56,14 @@ class GhostfolioClient:
 
     def account_by_name(self, name: str) -> dict | None:
         return next((a for a in self.accounts() if a.get("name", "").lower() == name.lower()), None)
+
+    def import_activities(self, doc: dict, *, dry_run: bool = False) -> list[dict]:
+        """POST the export file (accounts + activities). Returns the server's activity list, each with an
+        optional error ({"code": "IS_DUPLICATE"} etc.). A real run skips the ones with errors and creates
+        the rest; accounts are reused by name and currency, their balances ignored if they exist."""
+        body = {k: doc[k] for k in ("accounts", "activities", "assetProfiles") if k in doc}
+        params = {"dryRun": "true" if dry_run else "false"}
+        return self._request("POST", "/api/v1/import", params=params, json=body).get("activities") or []
 
     def set_cash_balance(self, account_id: str, balance: Decimal, on: date) -> dict:
         """Create or replace the account's cash balance entry for the given day."""
