@@ -14,6 +14,8 @@
 | `/oauth2/tokenP`, `/oauth2/revokeP` | 접근토큰 발급·폐기 (24h, 6h 이내 재발급은 동일 토큰) | `auth.py` |
 | TTTC8434R | 주식잔고조회 (보유 종목, `output2.dnca_tot_amt` 예수금) | `client.domestic_balance` |
 | TTTS3012R | 해외주식 잔고 (NASD = 미국 전체, USD) | `client.overseas_balance` |
+| TTTS3035R | 해외주식 주문체결내역 — 체결만(`CCLD_NCCS_DVSN=01`), 정순. `ord_dt`=현지 거래일, `dmst_ord_dt`+`thco_ord_tmd`=KST 접수시각. 수수료 없음, 소수점 체결 제외. 2015~ 전체 범위 한 번에 조회됨 | `client.overseas_orders` |
+| CTOS4001R | 해외주식 일별거래내역 — (거래일, 종목, side) 단위 집계, `dmst_frcr_fee1`(국내수수료)·`frcr_fee1`(해외제비용)·`std_pdno`(ISIN) | `client.overseas_trans` |
 
 ## OAuth인증
 

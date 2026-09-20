@@ -41,7 +41,7 @@ __all__ = [
 
 log = logging.getLogger("kis.client")
 
-MIN_INTERVAL = 0.1  # seconds between requests (10/s)
+MIN_INTERVAL = 0.2  # seconds between requests (5/s); 10/s still tripped EGW00201 once on the live account
 # EGW00215 is documented (inquire-balance.md); EGW00201 is the personal-quota variant from the portal.
 RATE_LIMIT_CODES = {"EGW00201", "EGW00215"}
 # Invalid / expired token, from the portal's error list (not in the exported docs): re-issue once.
@@ -215,6 +215,45 @@ class KisClient:
         return list(
             self.paged("/uapi/overseas-stock/v1/trading/inquire-balance", tr_id="TTTS3012R", params=params, ctx="200")
         )
+
+    def overseas_orders(self, account: Account, start: str, end: str) -> list[dict]:
+        """해외주식 주문체결내역 TTTS3035R, filled orders only (CCLD_NCCS_DVSN=01), every market, oldest
+        first. start/end are exchange-local order dates (YYYYMMDD). The whole range is one paged query;
+        the live account answered a 2015-2026 range without complaint."""
+        cano, prdt = account
+        params = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": prdt,
+            "PDNO": "%",
+            "ORD_STRT_DT": start,
+            "ORD_END_DT": end,
+            "SLL_BUY_DVSN": "00",
+            "CCLD_NCCS_DVSN": "01",
+            "OVRS_EXCG_CD": "%",
+            "SORT_SQN": "DS",
+            "ORD_DT": "",
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+        }
+        pages = self.paged("/uapi/overseas-stock/v1/trading/inquire-ccnl", tr_id="TTTS3035R", params=params, ctx="200")
+        return [r for p in pages for r in (p.get("output") or [])]
+
+    def overseas_trans(self, account: Account, start: str, end: str) -> list[dict]:
+        """해외주식 일별거래내역 CTOS4001R: one row per (trade date, symbol, side) with the fees. output1
+        rows; output2 (totals) is dropped."""
+        cano, prdt = account
+        params = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": prdt,
+            "ERLM_STRT_DT": start,
+            "ERLM_END_DT": end,
+            "OVRS_EXCG_CD": "",
+            "PDNO": "",
+            "SLL_BUY_DVSN_CD": "00",
+            "LOAN_DVSN_CD": "",
+        }
+        pages = self.paged("/uapi/overseas-stock/v1/trading/inquire-period-trans", tr_id="CTOS4001R", params=params)
+        return [r for p in pages for r in (p.get("output1") or [])]
 
 
 # --- CLI: connectivity probe ---------------------------------------------------

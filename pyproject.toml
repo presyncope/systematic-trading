@@ -14,6 +14,7 @@ toss-backfill-orders = "brokers.toss.backfill_orders:main"
 toss-export-tradesviz = "brokers.toss.export_tradesviz:main"
 toss-export-ghostfolio = "brokers.toss.export_ghostfolio:main"
 kis-auth = "brokers.kis.auth:main"
+kis-backfill = "brokers.kis.backfill:main"
 daily-sync = "jobs.daily_sync:main"
 
 [build-system]
