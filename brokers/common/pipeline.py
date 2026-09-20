@@ -1,15 +1,16 @@
-"""Steps shared by the exporters (TradesViz, Ghostfolio).
+"""Steps shared by the exporters (TradesViz, Ghostfolio) for every broker.
 
 An export is: fills from SQLite -> split normalization -> manual adjustments -> checks -> the
 product-specific file -> holdings reconciliation. Everything but the file is the same for every
-product, so it lives here; an exporter supplies argparse extras and a `write` function.
+product and broker, so it lives here; an exporter supplies argparse extras and a `write`
+function, a broker supplies a Broker (brokers/common/broker.py).
 
     p = argparse.ArgumentParser(...)
-    pipeline.add_arguments(p)
+    pipeline.add_arguments(p, broker)
     args = p.parse_args(argv)
-    return pipeline.run(args, target="tradesviz", product="TradesViz", write=my_write)
+    return pipeline.run(args, broker=broker, target="tradesviz", product="TradesViz", write=my_write)
 
-    def my_write(prepared: Prepared, client: TossClient | None) -> ExportResult: ...
+    def my_write(prepared: Prepared, client: Any | None) -> ExportResult: ...
 
 Exit codes: 0 ok / 1 nothing to export or API error / 2 auth or config error /
 3 undecided findings (nothing written) / 4 holdings mismatch (file written).
@@ -24,12 +25,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
-from brokers.toss import adjustments, auth, config, ledger, splits
-from brokers.toss.adjustments import Adjustments
-from brokers.toss.client import TossApiError, TossClient
-from brokers.toss.ledger import AdjustedFill, Finding, Mismatch
-from brokers.toss.store import OrderStore, Split
+from brokers.common import adjustments, ledger, splits
+from brokers.common.adjustments import Adjustments
+from brokers.common.broker import AuthError, Broker
+from brokers.common.ledger import AdjustedFill, Finding, Mismatch
+from brokers.common.models import Split
+from brokers.common.store import FillSource
 
 __all__ = [
     "ExportAbort",
@@ -44,7 +47,7 @@ __all__ = [
     "select_account",
 ]
 
-log = logging.getLogger("toss.pipeline")
+log = logging.getLogger("common.pipeline")
 
 
 class ExportAbort(Exception):
@@ -57,7 +60,7 @@ class ExportAbort(Exception):
 
 @dataclass(frozen=True)
 class Prepared:
-    account_seq: int
+    account: str
     currency: str | None
     fills: list[AdjustedFill]  # normalized, exclusions applied, oldest first
     excluded: list[AdjustedFill]
@@ -73,15 +76,15 @@ class ExportResult:
 # --- argparse ----------------------------------------------------------------
 
 
-def add_arguments(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--db", type=Path, default=None, help="SQLite path (default: toss.db in config.toml)")
+def add_arguments(p: argparse.ArgumentParser, broker: Broker) -> None:
+    p.add_argument("--db", type=Path, default=None, help=f"SQLite path (default: {broker.name}.db in config.toml)")
     p.add_argument(
         "--adjustments",
         type=Path,
         default=None,
-        help="manual corrections TOML (default: toss.adjustments in config.toml)",
+        help=f"manual corrections TOML (default: {broker.name}.adjustments in config.toml)",
     )
-    p.add_argument("--account-seq", type=int, default=None, help="accountSeq. Auto-selected if the DB has only one")
+    p.add_argument(broker.account_flag, dest="account", default=None, help=broker.account_help)
     p.add_argument(
         "--currency",
         default="USD",
@@ -105,17 +108,21 @@ def _setup_logging(verbose: bool) -> None:
 # --- steps -------------------------------------------------------------------
 
 
-def select_account(store: OrderStore, requested: int | None) -> int:
-    seqs = store.account_seqs()
-    if not seqs:
-        raise SystemExit("The DB has no orders. Run toss-backfill-orders first.")
+def select_account(store: FillSource, requested: str | None, broker: Broker) -> str:
+    accounts = store.accounts()
+    if not accounts:
+        raise SystemExit(f"The DB has no orders. Run {broker.backfill_command} first.")
     if requested is not None:
-        if requested not in seqs:
-            raise SystemExit(f"--account-seq {requested} is not in the DB: {seqs}")
+        try:
+            requested = broker.normalize_account(requested)
+        except ValueError:
+            raise SystemExit(f"{broker.account_flag} {requested!r} is not a valid account id") from None
+        if requested not in accounts:
+            raise SystemExit(f"{broker.account_flag} {requested} is not in the DB: {accounts}")
         return requested
-    if len(seqs) == 1:
-        return seqs[0]
-    raise SystemExit(f"Multiple accounts in the DB. Specify one with --account-seq: {seqs}")
+    if len(accounts) == 1:
+        return accounts[0]
+    raise SystemExit(f"Multiple accounts in the DB. Specify one with {broker.account_flag}: {accounts}")
 
 
 def _merge_splits(detected: list[Split], manual: list[Split]) -> list[Split]:
@@ -125,7 +132,7 @@ def _merge_splits(detected: list[Split], manual: list[Split]) -> list[Split]:
     return sorted(merged.values(), key=lambda sp: (sp.symbol, sp.ex_date))
 
 
-def _report_sync(report: splits.SyncReport) -> None:
+def _report_sync(report: splits.SyncReport, broker: Broker) -> None:
     log.info(
         "Split check: %d symbols, %d new split(s), %d removed, %d unresolved, %d unverifiable, %d distribution(s)",
         len(report.detections),
@@ -152,10 +159,11 @@ def _report_sync(report: splits.SyncReport) -> None:
     for symbol, ex_date, measured in report.unresolved:
         log.warning(
             "%s: price factor jumped on %s by %s but no clean ratio matches; "
-            "check the Toss app and add [[splits]] manually",
+            "check the %s app and add [[splits]] manually",
             symbol,
             ex_date,
             measured.quantize(Decimal("0.0001")),
+            broker.label,
         )
     for symbol in report.unverifiable:
         log.warning(
@@ -209,10 +217,11 @@ def decide_interactively(findings: list[Finding], adj_path: Path) -> int:
 
 
 def prepare(
-    store: OrderStore,
-    client: TossClient | None,
+    store: FillSource,
+    client: Any | None,
     *,
-    account_seq: int | None,
+    broker: Broker,
+    account: str | None,
     currency: str | None,
     adj: Adjustments,
     adj_path: Path,
@@ -220,15 +229,18 @@ def prepare(
 ) -> Prepared:
     """Fills -> splits -> adjustments -> findings. Raises ExportAbort(1) with nothing to export and
     ExportAbort(3) when findings are left undecided (after printing them)."""
-    account_seq = select_account(store, account_seq)
-    fills = store.fills(account_seq, currency=currency)
+    account = select_account(store, account, broker)
+    fills = store.fills(account, currency=currency)
     if not fills:
-        log.warning("No fills to export (account_seq=%s, currency=%s)", account_seq, currency or "ALL")
+        log.warning("No fills to export (account=%s, currency=%s)", account, currency or "ALL")
         raise ExportAbort(1)
 
-    if client:
-        _report_sync(splits.sync_splits(client, store, fills))
-    adjusted = ledger.apply_splits(fills, _merge_splits(store.get_splits(), adj.splits))
+    candles = broker.candle_source(client) if client else None
+    if candles:
+        _report_sync(splits.sync_splits(candles, store, fills, session_date=broker.session_date), broker)
+    adjusted = ledger.apply_splits(
+        fills, _merge_splits(store.get_splits(), adj.splits), session_date=broker.session_date
+    )
 
     def undecided(adj: Adjustments) -> tuple[list[AdjustedFill], list[AdjustedFill], list[Finding]]:
         kept, excluded = ledger.apply_exclusions(adjusted, adj.exclude_ids)
@@ -253,10 +265,10 @@ def prepare(
                 af.symbol,
                 af.trading_date,
             )
-    return Prepared(account_seq, currency, kept, excluded, adj)
+    return Prepared(account, currency, kept, excluded, adj)
 
 
-def _warn_stale_rows(store: OrderStore, fills: list[AdjustedFill], target: str, product: str) -> None:
+def _warn_stale_rows(store: FillSource, fills: list[AdjustedFill], target: str, product: str) -> None:
     """Splits detected after the last export change rows the product already has."""
     last = store.last_export(target)
     for sp in store.get_splits():
@@ -274,7 +286,9 @@ def _warn_stale_rows(store: OrderStore, fills: list[AdjustedFill], target: str, 
             )
 
 
-def print_reconciliation(net: dict[str, Decimal], mismatches: list[Mismatch], currency: str | None) -> None:
+def print_reconciliation(
+    net: dict[str, Decimal], mismatches: list[Mismatch], currency: str | None, broker: Broker
+) -> None:
     label = currency or "all currencies"
     bad = {m.symbol for m in mismatches}
     print(f"\n=== Holdings reconciliation ({label}) ===")
@@ -286,7 +300,10 @@ def print_reconciliation(net: dict[str, Decimal], mismatches: list[Mismatch], cu
         print(f"  {m.symbol:8} {_fmt(m.ours):>12}  MISMATCH: broker has {_fmt(m.broker)} {m.name}".rstrip())
     if mismatches:
         print(f"  {len(mismatches)} mismatch(es). Causes the order history cannot show: ticker changes, mergers,")
-        print("  shares received outside the order flow. Check the symbol in the Toss app; fix via adjustments.toml.")
+        print(
+            f"  shares received outside the order flow. Check the symbol in the {broker.label} app; "
+            "fix via adjustments.toml."
+        )
     else:
         print(f"  {len(open_symbols)} open position(s) match the broker.")
 
@@ -297,15 +314,16 @@ def print_reconciliation(net: dict[str, Decimal], mismatches: list[Mismatch], cu
 def run(
     args: argparse.Namespace,
     *,
+    broker: Broker,
     target: str,
     product: str,
-    write: Callable[[Prepared, TossClient | None], ExportResult],
+    write: Callable[[Prepared, Any | None], ExportResult],
 ) -> int:
     """Run the whole export. `write` turns the prepared fills into the product's file; it gets the
-    Toss client (None with --offline) for anything else it wants to look up."""
+    broker's API client (None with --offline) for anything else it wants to look up."""
     _setup_logging(args.verbose)
     currency = None if args.currency.upper() == "ALL" else args.currency.upper()
-    adj_path = args.adjustments or config.adjustments_path()
+    adj_path = args.adjustments or broker.adjustments_path()
 
     try:
         adj = adjustments.load(adj_path)
@@ -313,20 +331,21 @@ def run(
         log.error("%s", e)
         return 2
 
-    client: TossClient | None = None
+    client: Any | None = None
     if not args.offline:
         try:
-            client = TossClient()
-        except auth.TossAuthError as e:
+            client = broker.connect()
+        except AuthError as e:
             log.error("%s", e)
             return 2
 
     try:
-        with OrderStore(args.db or config.db_path()) as store:
+        with broker.open_store(args.db or broker.db_path()) as store:
             prepared = prepare(
                 store,
                 client,
-                account_seq=args.account_seq,
+                broker=broker,
+                account=args.account,
                 currency=currency,
                 adj=adj,
                 adj_path=adj_path,
@@ -336,18 +355,19 @@ def run(
             result = write(prepared, client)
             store.record_export(target, result.rows)
             if client:
-                holdings = client.get_holdings(prepared.account_seq).get("items") or []
                 net = ledger.net_positions(prepared.fills)
-                mismatches = ledger.reconcile(net, holdings, currency)
-                print_reconciliation(net, mismatches, currency)
+                mismatches = ledger.reconcile(net, broker.holdings(client, prepared.account), currency)
+                print_reconciliation(net, mismatches, currency, broker)
                 if mismatches:
                     return 4
     except ExportAbort as e:
         return e.code
-    except TossApiError as e:
+    except Exception as e:
+        if not broker.is_api_error(e):
+            raise
         log.error("API error: %s", e)
         return 1
     finally:
         if client:
-            client.close()
+            broker.close(client)
     return 0

@@ -1,4 +1,4 @@
-"""Manual corrections for the exporters, kept in a TOML file (data/toss/adjustments.toml by default).
+"""Manual corrections for the exporters, kept in a TOML file per broker (data/<broker>/adjustments.toml).
 
     [[splits]]                 # only for splits the candle check could not resolve
     symbol = "XYZ"
@@ -24,7 +24,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Literal
 
-from brokers.toss.store import Split
+from brokers.common.models import Split
 
 __all__ = [
     "ACTIONS",
@@ -39,7 +39,7 @@ __all__ = [
 Action = Literal["exclude", "keep"]
 ACTIONS: tuple[Action, ...] = ("exclude", "keep")
 
-HEADER = "# Manual corrections applied by toss-export-tradesviz. Format: brokers/toss/adjustments.py\n"
+HEADER = "# Manual corrections applied by the exporters. Format: brokers/common/adjustments.py\n"
 
 
 @dataclass(frozen=True)

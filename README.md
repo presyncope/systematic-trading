@@ -43,8 +43,9 @@ If a backfill is interrupted, re-running with the same options resumes from the 
 
 ### What the exporters check
 
-Both exporters share one pipeline (`brokers/toss/pipeline.py`). The order history alone is not
-enough for a correct journal, so each export also:
+Both exporters share one pipeline (`brokers/common/pipeline.py`; everything in `brokers/common/` is
+broker-neutral, `brokers/toss/` plugs Toss into it). The order history alone is not enough for a
+correct journal, so each export also:
 
 1. **Detects stock splits** from Toss daily candles (adjusted vs. raw close) and rewrites pre-split
    fills into the current share basis, so buys and sells add up and open positions match the broker.

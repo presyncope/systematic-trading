@@ -1,28 +1,30 @@
 """Pure computations over fills: split normalization, running positions, reconciliation.
 
-No I/O here, so every exporter (TradesViz today, Ghostfolio later) shares one set of rules.
+No I/O here, so every exporter (TradesViz, Ghostfolio) and every broker shares one set of rules.
 
 Share basis: fills are normalized to the *current* share basis so that fills before and after a
 split add up, and open positions match what the broker reports today. A fill on trading date d
 is multiplied by the ratio of every split whose ex_date is after d.
 
-Trading date: the exchange-local date a fill belongs to. Toss reports filledAt in KST; a 10:53
-KST fill is 21:53 the previous evening in New York. Fills after the 16:00 ET close belong to
-the next session (a split effective "after close" already applies to them), and weekend
-overnight-session fills belong to Monday. Holidays need no special handling: the only thing
-done with a trading date is comparing it to split ex_dates.
+Trading date: the exchange-local session date a fill belongs to. A broker that states it puts it
+on the Fill (Fill.trading_date); otherwise it is derived from filled_at with the broker's session
+rule (`session_date` argument of apply_splits). us_session_date is the rule for US listings:
+fills after the 16:00 ET close belong to the next session (a split effective "after close"
+already applies to them), and weekend overnight-session fills belong to Monday. Holidays need
+no special handling: the only thing done with a trading date is comparing it to split ex_dates.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
 from fractions import Fraction
 from zoneinfo import ZoneInfo
 
-from brokers.toss.store import Fill, Split
+from brokers.common.models import Fill, Holding, Split
 
 __all__ = [
     "CLOSE_HOUR",
@@ -32,25 +34,28 @@ __all__ = [
     "AdjustedFill",
     "Finding",
     "Mismatch",
+    "SessionRule",
     "apply_exclusions",
     "apply_splits",
     "net_positions",
     "position_before",
     "reconcile",
     "signed_quantity",
-    "trading_date",
     "unmatched_sells",
+    "us_session_date",
 ]
 
 ET = ZoneInfo("America/New_York")
 CLOSE_HOUR = 16
-# Toss reports fractional quantities with 6 decimals (e.g. 0.000081); prices with up to 6.
+# Brokers report fractional quantities with up to 6 decimals (e.g. 0.000081); prices with up to 6.
 QUANTITY_PLACES = 6
 PRICE_PLACES = 6
 
+SessionRule = Callable[[str], date]
 
-def trading_date(filled_at: str) -> date:
-    """Exchange-local session date of a fill (see module docstring)."""
+
+def us_session_date(filled_at: str) -> date:
+    """Session date of a US-market fill from its timestamp (see module docstring)."""
     dt = datetime.fromisoformat(filled_at).astimezone(ET)
     d = dt.date()
     if dt.hour >= CLOSE_HOUR:
@@ -112,7 +117,9 @@ class AdjustedFill:
         return abs(self.quantity) * self.price
 
 
-def apply_splits(fills: list[Fill], splits: list[Split]) -> list[AdjustedFill]:
+def apply_splits(
+    fills: list[Fill], splits: list[Split], *, session_date: SessionRule = us_session_date
+) -> list[AdjustedFill]:
     """Normalize every fill to the current share basis. Order is preserved."""
     by_symbol: dict[str, list[Split]] = defaultdict(list)
     for sp in splits:
@@ -120,7 +127,7 @@ def apply_splits(fills: list[Fill], splits: list[Split]) -> list[AdjustedFill]:
 
     out: list[AdjustedFill] = []
     for fill in fills:
-        td = trading_date(fill.filled_at)
+        td = fill.trading_date or session_date(fill.filled_at)
         factor = Fraction(1)
         near = False
         for sp in by_symbol.get(fill.symbol, ()):
@@ -195,13 +202,9 @@ class Mismatch:
     name: str
 
 
-def reconcile(net: dict[str, Decimal], holdings: list[dict], currency: str | None) -> list[Mismatch]:
-    """Compare net positions with the broker's holdings items (GET /api/v1/holdings)."""
-    broker = {
-        h["symbol"]: (Decimal(h["quantity"]), h.get("name", ""))
-        for h in holdings
-        if currency is None or h.get("currency") == currency
-    }
+def reconcile(net: dict[str, Decimal], holdings: list[Holding], currency: str | None) -> list[Mismatch]:
+    """Compare net positions with what the broker holds today."""
+    broker = {h.symbol: (h.quantity, h.name) for h in holdings if currency is None or h.currency == currency}
     out: list[Mismatch] = []
     for symbol in sorted(set(net) | set(broker)):
         ours = net.get(symbol, Decimal(0))

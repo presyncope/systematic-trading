@@ -11,7 +11,7 @@ import logging
 
 import httpx
 
-from brokers.toss import config
+from brokers.common import config
 
 __all__ = ["DISCORD_LIMIT", "TELEGRAM_LIMIT", "send", "telegram_chat_ids"]
 
