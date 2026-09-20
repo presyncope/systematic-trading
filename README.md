@@ -1,7 +1,7 @@
 # systematic-trading
 
 Fetches order history from the Toss Securities Open API, stores it in SQLite, and exports fills
-as a TradesViz CSV.
+as TradesViz and Ghostfolio CSVs.
 
 ## Setup
 
@@ -22,6 +22,7 @@ Issue a client under Toss Securities WTS Settings > Open API, and register your 
 uv run toss-auth                 # issue a token (cached in .toss_token.json, valid for 24h)
 uv run toss-backfill-orders      # backfill all closed orders → data/toss/orders.sqlite
 uv run toss-export-tradesviz     # USD fills → data/toss/tradesviz_executions.csv
+uv run toss-export-ghostfolio    # USD fills → data/toss/ghostfolio_activities.csv
 ```
 
 Common options:
@@ -40,9 +41,10 @@ uv run toss-export-tradesviz --tz America/New_York       # exchange time instead
 
 If a backfill is interrupted, re-running with the same options resumes from the last page.
 
-### What the exporter checks
+### What the exporters check
 
-The order history alone is not enough for a correct journal, so each export also:
+Both exporters share one pipeline (`brokers/toss/pipeline.py`). The order history alone is not
+enough for a correct journal, so each export also:
 
 1. **Detects stock splits** from Toss daily candles (adjusted vs. raw close) and rewrites pre-split
    fills into the current share basis, so buys and sells add up and open positions match the broker.
@@ -91,6 +93,13 @@ UI: `http://quant-server.tail69c58b.ts.net:3333` (or `http://100.104.205.124:333
 the tailnet. First visit → *Get Started* creates the admin user and shows a security token once — save it,
 it is the login. Data is in the `ghostfolio_postgres` volume; back up with
 `docker exec gf-postgres pg_dump -U user ghostfolio-db > ghostfolio.sql`.
+
+Then create an account named **Toss** (Settings > Accounts, USD) and import
+`data/toss/ghostfolio_activities.csv` under Settings > Import. Activities are dated by exchange
+session and quantities are in today's share basis, which is what Ghostfolio's Yahoo-based
+valuation needs. Later runs: `uv run toss-export-ghostfolio --from YYYY-MM-DD` for just the new
+sessions (a full re-export works too, Ghostfolio flags the rows it already has as duplicates).
+Dividends and cash movements are not in the Toss API; add them in Ghostfolio by hand.
 
 ## Notes
 

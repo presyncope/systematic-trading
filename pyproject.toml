@@ -12,6 +12,7 @@ dependencies = [
 toss-auth = "brokers.toss.auth:main"
 toss-backfill-orders = "brokers.toss.backfill_orders:main"
 toss-export-tradesviz = "brokers.toss.export_tradesviz:main"
+toss-export-ghostfolio = "brokers.toss.export_ghostfolio:main"
 
 [build-system]
 requires = ["hatchling"]
