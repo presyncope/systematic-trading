@@ -1,35 +1,37 @@
-"""Export Toss fills from SQLite as a Ghostfolio activities CSV.
+"""Export Toss fills from SQLite as a Ghostfolio activities JSON file.
 
-Ghostfolio (deploy/ghostfolio) imports activities from CSV under Settings > Import. The header
-names it recognizes (apps/client/src/app/services/import-activities.service.ts, 3.71.0) and what
-this file writes:
+Ghostfolio (deploy/ghostfolio) imports activities under Settings > Import. JSON, not CSV, on
+purpose: the CSV path only carries a date, the browser stamps every row at local midnight and
+the portfolio calculator then processes same-day activities in random order. A sell that runs
+before its buy is booked against an empty position, which turns day trades into phantom gains.
+JSON activities keep the fill timestamp, so the order is right (verified against 3.71.0:
+apps/api/src/app/activities/activities.service.ts orders by date, then id).
 
-    Date        yyyy-MM-dd. Ghostfolio activities are dated, not timed, and are valued against
-                daily market data, so the exchange session date is used (ledger.trading_date:
-                after-close and weekend overnight fills belong to the next session).
-    Code        ticker as Yahoo Finance knows it. Toss US tickers match; KRX codes would not.
-    DataSource  YAHOO
-    Currency    USD
-    Price       average fill price in the current share basis
-    Quantity    filled quantity, current share basis (direction comes from Action)
-    Action      buy / sell
-    Fee         commission + tax
-    Note        toss:<orderId>, which also makes Ghostfolio's duplicate check exact: it flags an
-                imported activity as a duplicate only when date, symbol, type, quantity, price,
-                fee and comment all match an existing one.
-    Account     name of the Ghostfolio account to book into (--account, default "Toss"); it must
-                exist before importing.
+File layout (test/import/ok/sample.json upstream):
+
+    accounts    one entry named --account (default "Toss"). Ghostfolio reuses the user's existing
+                account with the same name and currency and books the activities into it, so the
+                account must exist before importing; its id here is a stable UUID5 of the name.
+    activities  date       fill timestamp (execution.filledAt) in UTC; valued on that UTC day
+                symbol     ticker as Yahoo Finance knows it (Toss US tickers match; KRX codes do not)
+                dataSource YAHOO
+                type       BUY / SELL
+                quantity   filled quantity, current share basis
+                unitPrice  average fill price, current share basis
+                fee        commission + tax
+                comment    "toss:<orderId>" with --with-order-id, else null
 
 Split normalization matters here even more than for TradesViz: Ghostfolio values holdings at
 today's Yahoo price, so quantities must be in today's share basis or a pre-split position is
 worth 3x too little (SCHD) or 2000x too much (TANH).
 
-Re-importing the full file works but shows every already-imported row as a duplicate to skip;
---from YYYY-MM-DD exports only sessions on or after that date for incremental imports.
+Ghostfolio flags an imported activity as a duplicate when date (to the second), symbol, type,
+quantity, price, fee and comment all match an existing one, so re-importing the full file only
+adds what is new. --from YYYY-MM-DD exports only sessions on or after that date instead.
 Dividends, deposits and withdrawals are not in the Toss API; add them in Ghostfolio by hand.
 
 Usage:
-    uv run toss-export-ghostfolio                       # USD fills -> data/toss/ghostfolio_activities.csv
+    uv run toss-export-ghostfolio                       # USD fills -> data/toss/ghostfolio_activities.json
     uv run toss-export-ghostfolio --from 2026-09-18     # only newer sessions
     uv run toss-export-ghostfolio --account "Toss US"   # book into a differently named account
     uv run toss-export-ghostfolio --offline             # stored splits only, no API calls
@@ -38,10 +40,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import csv
+import json
 import logging
 import sys
-from datetime import date
+import uuid
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -50,13 +53,14 @@ from brokers.toss.ledger import AdjustedFill
 from brokers.toss.pipeline import Prepared
 
 __all__ = [
-    "COLUMNS",
+    "ACCOUNT_NAMESPACE",
     "DATA_SOURCE",
     "DEFAULT_ACCOUNT",
     "TARGET",
-    "export_csv",
+    "account_id",
+    "export_json",
     "main",
-    "to_row",
+    "to_activity",
 ]
 
 log = logging.getLogger("toss.export_ghostfolio")
@@ -64,37 +68,57 @@ log = logging.getLogger("toss.export_ghostfolio")
 TARGET = "ghostfolio"  # export_log key
 DEFAULT_ACCOUNT = "Toss"
 DATA_SOURCE = "YAHOO"
-
-COLUMNS = ["Date", "Code", "DataSource", "Currency", "Price", "Quantity", "Action", "Fee", "Note", "Account"]
-
-
-def _fmt(d: Decimal) -> str:
-    return format(d, "f")
+# Namespace for the UUID5 account ids, so the same account name always maps to the same id.
+ACCOUNT_NAMESPACE = uuid.UUID("6f1c2a7e-9b1d-4c0e-8f3a-2d5b7e9c1a44")
 
 
-def to_row(af: AdjustedFill, account: str) -> dict[str, str]:
+def account_id(name: str) -> str:
+    return str(uuid.uuid5(ACCOUNT_NAMESPACE, name))
+
+
+def _utc_iso(filled_at: str) -> str:
+    dt = datetime.fromisoformat(filled_at).astimezone(UTC)
+    return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def to_activity(af: AdjustedFill, account: str, *, with_order_id: bool = False) -> dict:
     return {
-        "Date": af.trading_date.isoformat(),
-        "Code": af.symbol,
-        "DataSource": DATA_SOURCE,
-        "Currency": af.fill.currency,
-        "Price": _fmt(af.price),
-        "Quantity": _fmt(abs(af.quantity)),
-        "Action": "buy" if af.quantity > 0 else "sell",
-        "Fee": _fmt(Decimal(af.fill.commission) + Decimal(af.fill.tax)),
-        "Note": f"toss:{af.order_id}",
-        "Account": account,
+        "accountId": account_id(account),
+        "comment": f"toss:{af.order_id}" if with_order_id else None,
+        "currency": af.fill.currency,
+        "dataSource": DATA_SOURCE,
+        "date": _utc_iso(af.fill.filled_at),
+        "fee": float(Decimal(af.fill.commission) + Decimal(af.fill.tax)),
+        "quantity": float(abs(af.quantity)),
+        "symbol": af.symbol,
+        "tags": [],
+        "type": "BUY" if af.quantity > 0 else "SELL",
+        "unitPrice": float(af.price),
     }
 
 
-def export_csv(fills: list[AdjustedFill], out: Path, account: str) -> pipeline.ExportResult:
-    rows = [to_row(f, account) for f in fills]
+def export_json(
+    fills: list[AdjustedFill], out: Path, account: str, *, currency: str, with_order_id: bool = False
+) -> pipeline.ExportResult:
+    doc = {
+        "meta": {"date": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"), "version": "dev"},
+        "accounts": [
+            {
+                "balances": [],
+                "comment": None,
+                "currency": currency,
+                "id": account_id(account),
+                "name": account,
+                "platformId": None,
+            }
+        ],
+        "activities": [to_activity(f, account, with_order_id=with_order_id) for f in fills],
+    }
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLUMNS, lineterminator="\n")
-        w.writeheader()
-        w.writerows(rows)
-    return pipeline.ExportResult(rows=len(rows), path=out)
+    with out.open("w") as f:
+        json.dump(doc, f, indent=1)
+        f.write("\n")
+    return pipeline.ExportResult(rows=len(doc["activities"]), path=out)
 
 
 def _iso_date(s: str) -> date:
@@ -105,9 +129,9 @@ def _iso_date(s: str) -> date:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Export Toss fills as a Ghostfolio activities CSV")
+    p = argparse.ArgumentParser(description="Export Toss fills as a Ghostfolio activities JSON file")
     pipeline.add_arguments(p)
-    p.add_argument("--out", type=Path, default=None, help="output CSV (default: toss.ghostfolio_csv in config.toml)")
+    p.add_argument("--out", type=Path, default=None, help="output file (default: toss.ghostfolio_json in config.toml)")
     p.add_argument("--account", default=DEFAULT_ACCOUNT, help=f"Ghostfolio account name (default {DEFAULT_ACCOUNT!r})")
     p.add_argument(
         "--from",
@@ -116,8 +140,9 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="only fills whose session date is on or after this date (YYYY-MM-DD, exchange local)",
     )
+    p.add_argument("--with-order-id", action="store_true", help="put toss:<orderId> in each activity's comment")
     args = p.parse_args(argv)
-    out: Path = args.out or config.ghostfolio_csv_path()
+    out: Path = args.out or config.ghostfolio_json_path()
 
     def write(prepared: Prepared) -> pipeline.ExportResult:
         fills = prepared.fills
@@ -125,7 +150,9 @@ def main(argv: list[str] | None = None) -> int:
             fills = [f for f in fills if f.trading_date >= args.from_date]
         if prepared.currency != "USD":
             log.warning("Symbols are written as-is; non-US tickers may need Yahoo suffixes (e.g. 005930.KS)")
-        result = export_csv(fills, out, args.account)
+        result = export_json(
+            fills, out, args.account, currency=prepared.currency or "USD", with_order_id=args.with_order_id
+        )
         if fills:
             log.info(
                 "Wrote %d activities (%s ~ %s, %s, %d excluded%s) -> %s",

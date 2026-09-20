@@ -22,7 +22,7 @@ __all__ = [
     "base_url",
     "credentials",
     "db_path",
-    "ghostfolio_csv_path",
+    "ghostfolio_json_path",
     "load",
     "token_cache_path",
     "tradesviz_csv_path",
@@ -37,7 +37,7 @@ DEFAULTS: dict[str, str] = {
     "token_cache": ".toss_token.json",
     "db": "data/toss/orders.sqlite",
     "tradesviz_csv": "data/toss/tradesviz_executions.csv",
-    "ghostfolio_csv": "data/toss/ghostfolio_activities.csv",
+    "ghostfolio_json": "data/toss/ghostfolio_activities.json",
     "adjustments": "data/toss/adjustments.toml",
 }
 
@@ -83,8 +83,8 @@ def tradesviz_csv_path() -> Path:
     return _resolve(_get("tradesviz_csv"))
 
 
-def ghostfolio_csv_path() -> Path:
-    return _resolve(_get("ghostfolio_csv"))
+def ghostfolio_json_path() -> Path:
+    return _resolve(_get("ghostfolio_json"))
 
 
 def adjustments_path() -> Path:

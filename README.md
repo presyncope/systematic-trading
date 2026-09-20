@@ -22,7 +22,7 @@ Issue a client under Toss Securities WTS Settings > Open API, and register your 
 uv run toss-auth                 # issue a token (cached in .toss_token.json, valid for 24h)
 uv run toss-backfill-orders      # backfill all closed orders → data/toss/orders.sqlite
 uv run toss-export-tradesviz     # USD fills → data/toss/tradesviz_executions.csv
-uv run toss-export-ghostfolio    # USD fills → data/toss/ghostfolio_activities.csv
+uv run toss-export-ghostfolio    # USD fills → data/toss/ghostfolio_activities.json
 ```
 
 Common options:
@@ -95,11 +95,13 @@ it is the login. Data is in the `ghostfolio_postgres` volume; back up with
 `docker exec gf-postgres pg_dump -U user ghostfolio-db > ghostfolio.sql`.
 
 Then create an account named **Toss** (Settings > Accounts, USD) and import
-`data/toss/ghostfolio_activities.csv` under Settings > Import. Activities are dated by exchange
-session and quantities are in today's share basis, which is what Ghostfolio's Yahoo-based
-valuation needs. Later runs: `uv run toss-export-ghostfolio --from YYYY-MM-DD` for just the new
-sessions (a full re-export works too, Ghostfolio flags the rows it already has as duplicates).
-Dividends and cash movements are not in the Toss API; add them in Ghostfolio by hand.
+`data/toss/ghostfolio_activities.json` under Settings > Import. It is JSON rather than CSV because
+only JSON keeps the fill timestamps: with date-only rows Ghostfolio processes same-day buys and
+sells in random order and day trades turn into phantom gains. Quantities are in today's share
+basis, which is what Ghostfolio's Yahoo-based valuation needs. Later runs:
+`uv run toss-export-ghostfolio --from YYYY-MM-DD` for just the new sessions (a full re-export works
+too, Ghostfolio flags the rows it already has as duplicates). Dividends and cash movements are not
+in the Toss API; add them in Ghostfolio by hand.
 
 ## Notes
 
