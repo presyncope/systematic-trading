@@ -76,6 +76,22 @@ That de-duplication also means TradesViz ignores rows that *changed*. When a new
 rewrites a symbol's earlier rows, the exporter says so (`Delete <symbol> trades in TradesViz, then
 import this file`); delete that symbol's trades in TradesViz first, then import.
 
+## Ghostfolio (performance tracking)
+
+Self-hosted in Docker, published only on the Tailscale IP (see `deploy/ghostfolio/`):
+
+```bash
+cd deploy/ghostfolio
+cp .env.example .env            # fill in the secrets: openssl rand -hex 32
+docker compose up -d
+docker compose logs -f ghostfolio
+```
+
+UI: `http://quant-server.tail69c58b.ts.net:3333` (or `http://100.104.205.124:3333`) from any device on
+the tailnet. First visit → *Get Started* creates the admin user and shows a security token once — save it,
+it is the login. Data is in the `ghostfolio_postgres` volume; back up with
+`docker exec gf-postgres pg_dump -U user ghostfolio-db > ghostfolio.sql`.
+
 ## Notes
 
 - Toss API spec: `agent-docs/toss/openapi.json`
