@@ -168,3 +168,35 @@ class TossClient:
 
     def get_orders_page(self, account_seq: int, query: OrderQuery, cursor: str | None = None) -> dict:
         return self.request("GET", "/api/v1/orders", params=query.params(cursor), account_seq=account_seq)["result"]
+
+    def get_holdings(self, account_seq: int) -> dict:
+        """HoldingsOverview: totals plus items[] (symbol, quantity, currency, name, ...)."""
+        return self.request("GET", "/api/v1/holdings", account_seq=account_seq)["result"]
+
+    def get_stocks(self, symbols: list[str]) -> list[dict]:
+        """StockInfo[] for up to 200 symbols (listDate, delistDate, status, ...)."""
+        return self.request("GET", "/api/v1/stocks", params={"symbols": ",".join(symbols)})["result"]
+
+    def get_candles(
+        self,
+        symbol: str,
+        *,
+        interval: str = "1d",
+        count: int = 200,
+        before: str | None = None,
+        adjusted: bool = True,
+    ) -> dict:
+        """CandlePageResponse: candles[] newest first, plus nextBefore for the next (older) page.
+
+        adjusted=False returns raw prices; the raw/adjusted close ratio is how splits.py detects splits.
+        Raises TossApiError(code="stock-not-found") for unknown/delisted symbols.
+        """
+        params: dict = {
+            "symbol": symbol,
+            "interval": interval,
+            "count": count,
+            "adjusted": "true" if adjusted else "false",
+        }
+        if before:
+            params["before"] = before
+        return self.request("GET", "/api/v1/candles", params=params)["result"]

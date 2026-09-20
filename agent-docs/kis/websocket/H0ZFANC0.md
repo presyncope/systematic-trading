@@ -1,0 +1,62 @@
+# 주식선물 실시간예상체결
+
+| 항목 | 값 |
+|---|---|
+| API 통신방식 | WEBSOCKET |
+| 메뉴 위치 | [국내선물옵션] 실시간시세 |
+| API ID | 실시간-031 |
+| 실전 TR_ID | H0ZFANC0 |
+| 모의 TR_ID | 모의투자 미지원 |
+| HTTP Method | POST |
+| 실전 Domain | ws://ops.koreainvestment.com:21000 |
+| 모의 Domain | 모의투자 미지원 |
+| URL 명 | /tryitout/H0ZFANC0 |
+
+## 개요
+
+[참고자료]
+
+실시간시세(웹소켓) 파이썬 샘플코드는 한국투자증권 Github 참고 부탁드립니다.
+https://github.com/koreainvestment/open-trading-api/tree/main/examples_user/domestic_futureoption
+
+실시간시세(웹소켓) API 사용방법에 대한 자세한 설명은 한국투자증권 Wikidocs 참고 부탁드립니다.
+https://wikidocs.net/book/7847 (국내주식, 해외주식 내용 참고)
+
+시세조회 가능한 종목코드 목록은 API문서 &gt; 종목정보파일 에서 확인하실 수 있습니다. ( 헤더파일 및 정제코드 참고)
+
+## Request Header
+
+| Element | 한글명 | Type | Required | Length | Description |
+|---|---|---|---|---|---|
+| approval_key | 웹소켓 접속키 | string | Y | 36 | 실시간 (웹소켓) 접속키 발급 API(/oauth2/Approval)를 사용하여 발급받은 웹소켓 접속키 |
+| custtype | 고객 타입 | string | Y | 1 | B : 법인 / P : 개인 |
+| tr_type | 등록/해제 | string | Y | 1 | 1: 등록, 2:해제 |
+| content-type | 컨텐츠타입 | string | Y | 20 | utf-8 |
+
+## Request Body
+
+| Element | 한글명 | Type | Required | Length | Description |
+|---|---|---|---|---|---|
+| tr_id | 거래ID | string | Y | 2 | H0ZFANC0 |
+| tr_key | 구분값 | string | Y | 12 | 주식선물 종목코드 |
+
+## Response Body
+
+| Element | 한글명 | Type | Required | Length | Description |
+|---|---|---|---|---|---|
+| FUTS_SHRN_ISCD | 선물단축종목코드 | string | Y | 9 |  |
+| BSOP_HOUR | 영업시간 | string | Y | 6 |  |
+| ANTC_CNPR | 예상체결가 | string | Y | 8 |  |
+| ANTC_CNTG_VRSS | 예상체결대비 | string | Y | 8 |  |
+| ANTC_CNTG_VRSS_SIGN | 예상체결대비부호 | string | Y | 1 |  |
+| ANTC_CNTG_PRDY_CTRT | 예상체결전일대비율 | string | Y | 8 |  |
+| ANTC_MKOP_CLS_CODE | 예상장운영구분코드 | string | Y | 3 |  |
+| ANTC_CNQN | 예상체결수량 | string | Y | 8 |  |
+
+## Request Example
+
+_(없음)_
+
+## Response Example
+
+_(없음)_

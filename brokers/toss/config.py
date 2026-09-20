@@ -1,7 +1,7 @@
 """Settings loading: secrets from .env, everything else from config.toml.
 
 - .env            : TOSS_CLIENT_ID / TOSS_CLIENT_SECRET (gitignored)
-- config.toml     : non-secret settings such as base_url, token_cache, db (committed)
+- config.toml     : non-secret settings such as base_url, token_cache, db, export paths (committed)
 
 Both are located from the repo root, independent of cwd.
 """
@@ -18,11 +18,13 @@ __all__ = [
     "CONFIG_PATH",
     "DEFAULTS",
     "REPO_ROOT",
+    "adjustments_path",
     "base_url",
     "credentials",
     "db_path",
     "load",
     "token_cache_path",
+    "tradesviz_csv_path",
 ]
 
 # brokers/toss/config.py -> parents[2] == repo root
@@ -33,6 +35,8 @@ DEFAULTS: dict[str, str] = {
     "base_url": "https://openapi.tossinvest.com",
     "token_cache": ".toss_token.json",
     "db": "data/toss/orders.sqlite",
+    "tradesviz_csv": "data/toss/tradesviz_executions.csv",
+    "adjustments": "data/toss/adjustments.toml",
 }
 
 _settings: dict[str, str] = {}
@@ -71,6 +75,14 @@ def token_cache_path() -> Path:
 
 def db_path() -> Path:
     return _resolve(_get("db"))
+
+
+def tradesviz_csv_path() -> Path:
+    return _resolve(_get("tradesviz_csv"))
+
+
+def adjustments_path() -> Path:
+    return _resolve(_get("adjustments"))
 
 
 def credentials() -> tuple[str | None, str | None]:

@@ -11,6 +11,7 @@ dependencies = [
 [project.scripts]
 toss-auth = "brokers.toss.auth:main"
 toss-backfill-orders = "brokers.toss.backfill_orders:main"
+toss-export-tradesviz = "brokers.toss.export_tradesviz:main"
 
 [build-system]
 requires = ["hatchling"]
