@@ -1,8 +1,8 @@
 [Unit]
-Description=Run daily-sync every day at 12:00 KST (03:00 UTC)
+Description=Run daily-sync twice a day: 09:30 KST (after US after-hours) and 18:30 KST (after Toss daytime trading)
 
 [Timer]
-OnCalendar=*-*-* 03:00:00 UTC
+OnCalendar=*-*-* 00,09:30:00 UTC
 RandomizedDelaySec=300
 Persistent=true
 

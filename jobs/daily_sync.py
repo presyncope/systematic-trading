@@ -14,11 +14,12 @@ A step's exit code decides what follows: backfill failure skips everything (stal
 only be re-exported); exporter exit 3 (a sell without an opening fill needs a decision in
 adjustments.toml) skips the imports and asks for `toss-export-ghostfolio --interactive`; exit 4
 (holdings mismatch) still imports but is reported. Anything not clean is sent to the webhook
-(jobs/notify.py); --notify-success also sends the daily summary when everything is fine.
+(jobs/notify.py); --notify-success also sends the summary when everything is fine, --notify-changes
+only when it is fine and new activities went into Ghostfolio (the summary then lists them).
 --notify-test sends a test message (and, for Telegram, prints the chat ids that have messaged
 the bot so TELEGRAM_CHAT_ID can be filled in).
 
-Scheduling: deploy/systemd/daily-sync.timer (12:00 KST). A lock file prevents overlapping runs.
+Scheduling: deploy/systemd/daily-sync.timer (09:30 and 18:30 KST). A lock file prevents overlapping runs.
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ class StepResult:
     note: str = ""
     output: str = ""  # combined stdout/stderr, for the log and the notification
     rc: int | None = None
+    changed: bool = False  # the step wrote something new (activities created in Ghostfolio)
 
     @property
     def ok(self) -> bool:
@@ -82,7 +84,7 @@ def run_module(module: str, args: list[str]) -> StepResult:
 
 
 def _tail(text: str, n: int = TAIL_LINES) -> str:
-    lines = [ln for ln in text.strip().splitlines() if ln.strip()]
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
     return "\n".join(lines[-n:])
 
 
@@ -110,19 +112,25 @@ def import_to_ghostfolio(path: Path, *, client: GhostfolioClient | None = None) 
         return StepResult(name, "fail", f"import failed: {e}")
 
     note = f"{len(created)} new, {len(duplicates)} already there"
+    changed = bool(created)
     if rejected:
         detail = "\n".join(_describe_rejected(a) for a in rejected[:TAIL_LINES])
-        return StepResult(name, "fail", f"{note}, {len(rejected)} rejected", detail)
+        return StepResult(name, "fail", f"{note}, {len(rejected)} rejected", detail, changed=changed)
+    detail = "\n".join(_describe_activity(a) for a in created)
     if len(created) != len(fresh):
-        return StepResult(name, "warn", f"{note}; expected {len(fresh)} new")
-    return StepResult(name, "ok", note)
+        return StepResult(name, "warn", f"{note}; expected {len(fresh)} new", detail, changed=changed)
+    return StepResult(name, "ok", note, detail, changed=changed)
+
+
+def _describe_activity(a: dict) -> str:
+    symbol = (a.get("assetProfile") or {}).get("symbol") or a.get("symbol")
+    when = str(a.get("date", ""))[:10]
+    return f"  {when} {a.get('type', '')} {symbol} {a.get('quantity', '')} @ {a.get('unitPrice', '')}"
 
 
 def _describe_rejected(a: dict) -> str:
-    symbol = (a.get("assetProfile") or {}).get("symbol") or a.get("symbol")
     err = a.get("error") or {}
-    when = str(a.get("date", ""))[:10]
-    return f"  {when} {a.get('type', '')} {symbol}: {err.get('code')} {err.get('message', '')}".rstrip()
+    return f"{_describe_activity(a)}: {err.get('code')} {err.get('message', '')}".rstrip()
 
 
 def _copy_to_sync_dir(csv_path: Path, sync_dir: Path) -> StepResult:
@@ -140,8 +148,8 @@ def summarize(results: list[StepResult], started: datetime) -> str:
     lines = [f"daily-sync {started:%Y-%m-%d %H:%M} UTC"]
     for r in results:
         lines.append(f"{marks[r.level]} {r.name}: {r.note}")
-    for r in results:
-        if r.level in ("warn", "fail") and r.output.strip():
+    for r in results:  # what went wrong, or what is new
+        if (r.level in ("warn", "fail") or r.changed) and r.output.strip():
             lines.append(f"--- {r.name}\n{_tail(r.output)}")
     return "\n".join(lines)
 
@@ -207,6 +215,11 @@ def notify_test() -> int:
 def main(argv: list[str] | None = None, *, runner: Runner = run_module) -> int:
     p = argparse.ArgumentParser(description="Daily Toss -> Ghostfolio/TradesViz sync")
     p.add_argument("--notify-success", action="store_true", help="also send the summary when everything is fine")
+    p.add_argument(
+        "--notify-changes",
+        action="store_true",
+        help="also send the summary when everything is fine and new activities were imported",
+    )
     p.add_argument("--no-notify", action="store_true", help="never send a notification (print only)")
     p.add_argument("--notify-test", action="store_true", help="send a test notification and exit")
     p.add_argument("--no-cash", action="store_true", help="skip the cash balance update")
@@ -235,7 +248,8 @@ def main(argv: list[str] | None = None, *, runner: Runner = run_module) -> int:
             log.info("[%s] output:\n%s", r.name, r.output.rstrip())
 
     clean = all(r.ok for r in results)
-    if not args.no_notify and (not clean or args.notify_success):
+    changed = any(r.changed for r in results)
+    if not args.no_notify and (not clean or args.notify_success or (args.notify_changes and changed)):
         notify.send(text)
     return 0 if all(r.level != "fail" for r in results) else 1
 

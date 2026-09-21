@@ -8,4 +8,4 @@ Description=Toss -> Ghostfolio/TradesViz daily sync
 [Service]
 Type=oneshot
 WorkingDirectory=%h/repos/systematic-trading
-ExecStart=%h/repos/systematic-trading/deploy/bin/daily-sync.sh
+ExecStart=%h/repos/systematic-trading/deploy/bin/daily-sync.sh --notify-changes
