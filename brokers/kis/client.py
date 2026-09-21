@@ -216,6 +216,22 @@ class KisClient:
             self.paged("/uapi/overseas-stock/v1/trading/inquire-balance", tr_id="TTTS3012R", params=params, ctx="200")
         )
 
+    def overseas_present_balance(self, account: Account) -> dict:
+        """해외주식 체결기준현재잔고 CTRP6504R in foreign currency for every market. output2 has one entry
+        per currency with frcr_dncl_amt_2 (외화예수금); output1 holdings, output3 totals."""
+        cano, prdt = account
+        params = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": prdt,
+            "WCRC_FRCR_DVSN_CD": "02",
+            "NATN_CD": "000",
+            "TR_MKET_CD": "00",
+            "INQR_DVSN_CD": "00",
+        }
+        return self.request(
+            "GET", "/uapi/overseas-stock/v1/trading/inquire-present-balance", tr_id="CTRP6504R", params=params
+        ).body
+
     def overseas_orders(self, account: Account, start: str, end: str) -> list[dict]:
         """해외주식 주문체결내역 TTTS3035R, filled orders only (CCLD_NCCS_DVSN=01), every market, oldest
         first. start/end are exchange-local order dates (YYYYMMDD). The whole range is one paged query;

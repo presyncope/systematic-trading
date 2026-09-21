@@ -9,6 +9,7 @@ from pathlib import Path
 from brokers.common import ledger
 from brokers.common.broker import AuthError
 from brokers.common.models import Holding
+from brokers.common.store import FillSource
 from brokers.toss import auth, config
 from brokers.toss.candles import TossCandleSource
 from brokers.toss.client import TossApiError, TossClient
@@ -24,7 +25,6 @@ class TossBroker:
     account_flag = "--account-seq"
     account_help = "accountSeq. Auto-selected if the DB has only one"
     holdings_source = "GET /api/v1/holdings"
-    ghostfolio_account = "Toss"
 
     def db_path(self) -> Path:
         return config.db_path()
@@ -32,11 +32,17 @@ class TossBroker:
     def adjustments_path(self) -> Path:
         return config.adjustments_path()
 
-    def tradesviz_csv_path(self) -> Path:
+    def tradesviz_csv_path(self, currency: str | None) -> Path:
         return config.tradesviz_csv_path()
 
-    def ghostfolio_json_path(self) -> Path:
+    def ghostfolio_json_path(self, currency: str | None) -> Path:
         return config.ghostfolio_json_path()
+
+    def ghostfolio_account(self, currency: str) -> str:
+        return "Toss"
+
+    def ghostfolio_symbol(self, store: FillSource, symbol: str, currency: str) -> str:
+        return symbol  # Toss US tickers are what Yahoo uses; KRX codes would need a suffix
 
     def open_store(self, path: Path) -> OrderStore:
         return OrderStore(path)

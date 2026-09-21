@@ -46,7 +46,8 @@ If a backfill is interrupted, re-running with the same options resumes from the 
 
 ### KIS (한국투자증권)
 
-Under construction: overseas (US) and domestic (KRX) fills are stored; exporters and rights follow.
+Overseas (US) and domestic (KRX) fills are stored and exported; rights (dividends, splits) and
+split detection follow.
 Setup: at [KIS Developers](https://apiportal.koreainvestment.com) issue a **live-trading** (실전투자) app
 key for the account, put it in `.env` as `KIS_APP_KEY` / `KIS_APP_SECRET` and the account number as
 `KIS_ACCOUNT=12345678-01` (종합계좌번호-계좌상품코드). Overseas endpoints also require the account to
@@ -59,7 +60,19 @@ uv run python -m brokers.kis.client --probe  # call the domestic + overseas bala
 uv run kis-backfill                          # overseas + domestic fills → data/kis/kis.sqlite (incremental)
 uv run kis-backfill --market domestic        # one market only
 uv run kis-backfill --restart                # the whole history again
+uv run kis-export-ghostfolio --cash          # USD fills → data/kis/ghostfolio_activities.json, account "KIS"
+uv run kis-export-ghostfolio --currency KRW --cash   # KRX fills → ..._krw.json, account "KIS KRW"
+uv run kis-export-tradesviz [--currency KRW] # USD → data/kis/tradesviz_executions.csv, KRW → ..._krw.csv
 ```
+
+The exporters are the shared ones (same options, checks and exit codes as the Toss commands; the
+broker account option is `--kis-account`). One KIS account holds both currencies, and a Ghostfolio
+account's cash balance has one currency, so create two Ghostfolio accounts before importing:
+**KIS** (USD) and **KIS KRW** (KRW). `--cash` records the USD 외화예수금 (CTRP6504R) or the KRW 예수금
+(TTTC8434R) on the matching account. KRX symbols are written for Yahoo as `005930.KS` / `440110.KQ`
+(the instruments table filled by the backfill); the TradesViz CSV keeps the plain 6-digit code.
+Splits are not detected for KIS yet, so a split in a US holding shows up as a holdings mismatch
+(exit 4) until it is entered in `data/kis/adjustments.toml`.
 
 How KIS fills are built (`brokers/kis/fills.py`): the order endpoint (TTTS3035R) has the order id,
 KST time, quantity and price but no fees; the daily-transaction endpoint (CTOS4001R) has the fees,

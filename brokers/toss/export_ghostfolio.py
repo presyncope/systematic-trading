@@ -37,7 +37,7 @@ __all__ = [
     "to_activity",
 ]
 
-DEFAULT_ACCOUNT = TOSS.ghostfolio_account
+DEFAULT_ACCOUNT = TOSS.ghostfolio_account("USD")
 
 
 def main(argv: list[str] | None = None) -> int:

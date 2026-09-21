@@ -141,7 +141,8 @@ def main(broker: Broker, argv: list[str] | None = None) -> int:
     )
     args = p.parse_args(argv)
     tz: ZoneInfo = args.tz  # argparse runs type= on the string default too
-    out: Path = args.out or broker.tradesviz_csv_path()
+    currency = None if args.currency.upper() == "ALL" else args.currency.upper()
+    out: Path = args.out or broker.tradesviz_csv_path(currency)
 
     def write(prepared: Prepared, _client: Any | None) -> pipeline.ExportResult:
         result = export_csv(prepared.fills, out, tz)

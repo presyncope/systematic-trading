@@ -9,12 +9,14 @@ apps/api/src/app/activities/activities.service.ts orders by date, then id).
 
 File layout (test/import/ok/sample.json upstream):
 
-    accounts    one entry named --account (default: the broker's Ghostfolio account name).
-                Ghostfolio reuses the user's existing account with the same name and currency and
-                books the activities into it, so the account must exist before importing; its id
-                here is a stable UUID5 of the name.
+    accounts    one entry named --account (default: the broker's account name for the currency,
+                e.g. "KIS" for USD and "KIS KRW" for KRW, since a Ghostfolio account's cash balance
+                has one currency). Ghostfolio reuses the user's existing account with the same
+                name and currency and books the activities into it, so the account must exist
+                before importing; its id here is a stable UUID5 of the name.
     activities  date       fill timestamp in UTC; valued on that UTC day
-                symbol     ticker as Yahoo Finance knows it (US tickers match; KRX codes do not)
+                symbol     ticker as Yahoo Finance knows it (US tickers match; KRX codes get the
+                           broker's .KS/.KQ mapping via Broker.ghostfolio_symbol)
                 dataSource YAHOO
                 type       BUY / SELL
                 quantity   filled quantity, current share basis
@@ -88,8 +90,11 @@ def _utc_iso(filled_at: str) -> str:
     return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def to_activity(af: AdjustedFill, account: str, *, order_id_prefix: str | None = None) -> dict:
-    """order_id_prefix ("toss") puts "<prefix>:<orderId>" in the comment; None leaves it null."""
+def to_activity(
+    af: AdjustedFill, account: str, *, order_id_prefix: str | None = None, symbol: str | None = None
+) -> dict:
+    """order_id_prefix ("toss") puts "<prefix>:<orderId>" in the comment; None leaves it null.
+    `symbol` overrides the fill's symbol with the Yahoo spelling when they differ."""
     return {
         "accountId": account_id(account),
         "comment": f"{order_id_prefix}:{af.order_id}" if order_id_prefix else None,
@@ -98,7 +103,7 @@ def to_activity(af: AdjustedFill, account: str, *, order_id_prefix: str | None =
         "date": _utc_iso(af.fill.filled_at),
         "fee": float(Decimal(af.fill.commission) + Decimal(af.fill.tax)),
         "quantity": float(abs(af.quantity)),
-        "symbol": af.symbol,
+        "symbol": symbol or af.symbol,
         "tags": [],
         "type": "BUY" if af.quantity > 0 else "SELL",
         "unitPrice": float(af.price),
@@ -113,7 +118,9 @@ def export_json(
     currency: str,
     order_id_prefix: str | None = None,
     cash: Decimal | None = None,
+    symbols: dict[str, str] | None = None,
 ) -> pipeline.ExportResult:
+    """`symbols` maps a fill symbol to its Yahoo spelling where they differ."""
     now = datetime.now(UTC)
     balances = [{"date": _midnight(now.date()), "value": float(cash)}] if cash is not None else []
     doc = {
@@ -128,7 +135,10 @@ def export_json(
                 "platformId": None,
             }
         ],
-        "activities": [to_activity(f, account, order_id_prefix=order_id_prefix) for f in fills],
+        "activities": [
+            to_activity(f, account, order_id_prefix=order_id_prefix, symbol=(symbols or {}).get(f.symbol))
+            for f in fills
+        ],
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w") as f:
@@ -173,8 +183,8 @@ def main(broker: Broker, argv: list[str] | None = None) -> int:
     p.add_argument(
         "--account",
         dest="gf_account",
-        default=broker.ghostfolio_account,
-        help=f"Ghostfolio account name (default {broker.ghostfolio_account!r})",
+        default=None,
+        help=f"Ghostfolio account name (default {broker.ghostfolio_account('USD')!r} for USD fills)",
     )
     p.add_argument(
         "--from",
@@ -190,29 +200,41 @@ def main(broker: Broker, argv: list[str] | None = None) -> int:
         "--cash", action="store_true", help="record today's cash balance (buying power) on the Ghostfolio account"
     )
     args = p.parse_args(argv)
-    out: Path = args.out or broker.ghostfolio_json_path()
+    export_currency = None if args.currency.upper() == "ALL" else args.currency.upper()
+    out: Path = args.out or broker.ghostfolio_json_path(export_currency)
     if args.cash and args.offline:
         p.error(f"--cash needs the {broker.label} API; drop --offline")
+    if export_currency is None and broker.ghostfolio_account("USD") != broker.ghostfolio_account("KRW"):
+        p.error(f"{broker.label} keeps one Ghostfolio account per currency; export one --currency at a time")
 
     def write(prepared: Prepared, client: Any | None) -> pipeline.ExportResult:
         fills = prepared.fills
         if args.from_date:
             fills = [f for f in fills if f.trading_date >= args.from_date]
         currency = prepared.currency or "USD"
-        if currency != "USD":
-            log.warning("Symbols are written as-is; non-US tickers may need Yahoo suffixes (e.g. 005930.KS)")
+        account = args.gf_account or broker.ghostfolio_account(currency)
+        symbols = {
+            f.symbol: broker.ghostfolio_symbol(prepared.store, f.symbol, f.fill.currency)
+            for f in fills
+            if f.fill.currency != "USD"
+        }
+        as_is = sorted(k for k, v in symbols.items() if v == k)
+        if as_is:
+            log.warning("Non-US symbols written as-is; Yahoo may need a suffix (e.g. 005930.KS): %s", ", ".join(as_is))
+        symbols = {k: v for k, v in symbols.items() if v != k}
         cash = broker.cash(client, prepared.account, currency) if args.cash and client else None
         result = export_json(
             fills,
             out,
-            args.gf_account,
+            account,
             currency=currency,
             order_id_prefix=broker.name if args.with_order_id else None,
             cash=cash,
+            symbols=symbols,
         )
         if cash is not None:
-            log.info("Cash balance (%s buying power): %s", currency, cash)
-            push_cash_balance(args.gf_account, cash, datetime.now(UTC).date())
+            log.info("Cash balance (%s): %s", currency, cash)
+            push_cash_balance(account, cash, datetime.now(UTC).date())
         if fills:
             log.info(
                 "Wrote %d activities (%s ~ %s, %s, %d excluded%s) -> %s",
@@ -226,7 +248,7 @@ def main(broker: Broker, argv: list[str] | None = None) -> int:
             )
         else:
             log.warning("No fills on or after %s; wrote an empty file -> %s", args.from_date, result.path)
-        print(f"Import in Ghostfolio: Settings > Import, account {args.gf_account!r} must exist")
+        print(f"Import in Ghostfolio: Settings > Import, account {account!r} must exist")
         return result
 
     return pipeline.run(args, broker=broker, target=TARGET, product="Ghostfolio", write=write)

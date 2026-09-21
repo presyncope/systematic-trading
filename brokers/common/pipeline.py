@@ -45,6 +45,7 @@ __all__ = [
     "print_reconciliation",
     "run",
     "select_account",
+    "target_key",
 ]
 
 log = logging.getLogger("common.pipeline")
@@ -65,6 +66,7 @@ class Prepared:
     fills: list[AdjustedFill]  # normalized, exclusions applied, oldest first
     excluded: list[AdjustedFill]
     adjustments: Adjustments
+    store: FillSource
 
 
 @dataclass(frozen=True)
@@ -265,7 +267,7 @@ def prepare(
                 af.symbol,
                 af.trading_date,
             )
-    return Prepared(account, currency, kept, excluded, adj)
+    return Prepared(account, currency, kept, excluded, adj, store)
 
 
 def _warn_stale_rows(store: FillSource, fills: list[AdjustedFill], target: str, product: str) -> None:
@@ -308,6 +310,12 @@ def print_reconciliation(
         print(f"  {len(open_symbols)} open position(s) match the broker.")
 
 
+def target_key(target: str, currency: str | None) -> str:
+    """export_log key: the plain target for the default currency, "<target>:<currency>" otherwise,
+    so that each currency's export is tracked on its own."""
+    return target if currency in (None, "USD") else f"{target}:{currency}"
+
+
 # --- runner ------------------------------------------------------------------
 
 
@@ -324,6 +332,7 @@ def run(
     _setup_logging(args.verbose)
     currency = None if args.currency.upper() == "ALL" else args.currency.upper()
     adj_path = args.adjustments or broker.adjustments_path()
+    target = target_key(target, currency)
 
     try:
         adj = adjustments.load(adj_path)
