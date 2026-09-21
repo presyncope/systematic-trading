@@ -314,6 +314,27 @@ class KisClient:
         )
         return [r for p in pages for r in (p.get("output1") or [])]
 
+    def domestic_rights(self, account: Account, start: str, end: str) -> list[dict]:
+        """기간별계좌권리현황조회 CTRGA011R: every corporate action booked on the account (dividends,
+        splits, bonus issues, ...) between two record dates (기준일자). INQR_DVSN=03 is the only
+        supported mode and the other filters stay blank. Live check: an eleven-year range was
+        accepted in one call."""
+        cano, prdt = account
+        params = {
+            "INQR_DVSN": "03",
+            "CUST_RNCNO25": "",
+            "HMID": "",
+            "CANO": cano,
+            "ACNT_PRDT_CD": prdt,
+            "INQR_STRT_DT": start,
+            "INQR_END_DT": end,
+            "RGHT_TYPE_CD": "",
+            "PDNO": "",
+            "PRDT_TYPE_CD": "",
+        }
+        pages = self.paged("/uapi/domestic-stock/v1/trading/period-rights", tr_id="CTRGA011R", params=params)
+        return [r for p in pages for r in (p.get("output") or [])]
+
     def stock_info(self, pdno: str) -> dict:
         """주식기본조회 CTPF1002R for a KRX code: prdt_name, mket_id_cd (STK/KSQ), std_pdno (ISIN), ..."""
         resp = self.request(

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from brokers.common import ledger
 from brokers.common.broker import AuthError
-from brokers.common.models import Holding
+from brokers.common.models import Dividend, Holding
 from brokers.common.store import FillSource
 from brokers.toss import auth, config
 from brokers.toss.candles import TossCandleSource
@@ -74,6 +74,9 @@ class TossBroker:
 
     def cash(self, client: TossClient, account: str, currency: str) -> Decimal:
         return client.get_buying_power(int(account), currency)
+
+    def dividends(self, store: FillSource, account: str, currency: str) -> list[Dividend]:
+        return []  # the Toss API has no dividend or cash-transaction data
 
 
 TOSS = TossBroker()

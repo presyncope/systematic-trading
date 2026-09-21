@@ -8,6 +8,8 @@ Tables (all keyed by account = "CANO-PRDT"):
 - domestic_orders : filled orders from TTTC0081R / CTSC9215R, one row per (order date, odno).
 - domestic_daily_pl : TTTC8715R rows, one per (trad_dt, pdno) with that day's fee and tax for
                     the symbol (buys and sells together); replaced per fetched date range.
+- rights          : CTRGA011R corporate actions on the account (dividends, splits, bonus issues),
+                    replaced per fetched record-date range.
 - instruments     : CTPF1002R per domestic symbol: name, market (STK = KOSPI, KSQ = KOSDAQ),
                     ISIN and the Yahoo symbol the Ghostfolio export uses.
 - fills           : what the exporters read (brokers.common.models.Fill), rebuilt from the raw
@@ -85,6 +87,24 @@ CREATE TABLE IF NOT EXISTS domestic_daily_pl (
     raw_json      TEXT NOT NULL,
     fetched_at    TEXT NOT NULL,
     PRIMARY KEY (account, trad_dt, pdno, seq)
+);
+
+CREATE TABLE IF NOT EXISTS rights (
+    account       TEXT NOT NULL,
+    bass_dt       TEXT NOT NULL,      -- 기준일자 (record date)
+    pdno          TEXT NOT NULL,      -- 6-char KRX code (normalized)
+    rght_type_cd  TEXT NOT NULL,      -- 03 배당, 14 액면분할, 15 액면병합, 02 무상증자, ...
+    cblc_type_cd  TEXT NOT NULL,      -- 권리잔고유형코드
+    name          TEXT,
+    cblc_qty      TEXT,               -- holding the right was based on
+    last_alct_qty TEXT,               -- shares allocated (bonus issues, splits)
+    tot_alct_qty  TEXT,
+    alct_amt      TEXT,               -- last_alct_amt: cash amount (gross)
+    tax_amt       TEXT,
+    cash_dfrm_dt  TEXT,               -- 현금지급일자 (payment date)
+    raw_json      TEXT NOT NULL,
+    fetched_at    TEXT NOT NULL,
+    PRIMARY KEY (account, bass_dt, pdno, rght_type_cd, cblc_type_cd)
 );
 
 CREATE TABLE IF NOT EXISTS instruments (
@@ -250,6 +270,25 @@ def _domestic_order_row(r: dict, account: str, fetched_at: str) -> dict:
     }
 
 
+def _rights_row(r: dict, account: str, fetched_at: str) -> dict:
+    return {
+        "account": account,
+        "bass_dt": r["bass_dt"],
+        "pdno": short_code(r.get("shtn_pdno") or r["pdno"]),
+        "rght_type_cd": r.get("rght_type_cd", ""),
+        "cblc_type_cd": r.get("rght_cblc_type_cd", ""),
+        "name": r.get("prdt_name"),
+        "cblc_qty": r.get("cblc_qty", "0"),
+        "last_alct_qty": r.get("last_alct_qty", "0"),
+        "tot_alct_qty": r.get("tot_alct_qty", "0"),
+        "alct_amt": r.get("last_alct_amt", "0"),
+        "tax_amt": r.get("tax_amt", "0"),
+        "cash_dfrm_dt": r.get("cash_dfrm_dt") or None,
+        "raw_json": json.dumps(r, ensure_ascii=False, sort_keys=True),
+        "fetched_at": fetched_at,
+    }
+
+
 def _daily_pl_row(r: dict, account: str, seq: int, fetched_at: str) -> dict:
     return {
         "account": account,
@@ -372,6 +411,29 @@ class KisStore(SplitStore):
             dict(r)
             for r in self._conn.execute(
                 "SELECT * FROM domestic_daily_pl WHERE account = ? ORDER BY trad_dt, pdno, seq", (account,)
+            )
+        ]
+
+    def replace_rights(self, rows: list[dict], account: str, from_date: str, to_date: str) -> int:
+        """Replace the stored CTRGA011R rows whose bass_dt is within [from_date, to_date] (YYYYMMDD)."""
+        fetched_at = now_iso()
+        data = [_rights_row(r, account, fetched_at) for r in rows]
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM rights WHERE account = ? AND bass_dt BETWEEN ? AND ?", (account, from_date, to_date)
+            )
+            if data:
+                cols = list(data[0])
+                self._conn.executemany(
+                    f"INSERT INTO rights ({', '.join(cols)}) VALUES ({', '.join(':' + c for c in cols)})", data
+                )
+        return len(data)
+
+    def rights(self, account: str) -> list[dict]:
+        return [
+            dict(r)
+            for r in self._conn.execute(
+                "SELECT * FROM rights WHERE account = ? ORDER BY bass_dt, pdno, rght_type_cd", (account,)
             )
         ]
 

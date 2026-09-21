@@ -3,8 +3,9 @@
 Overseas: TTTS3035R filled orders and CTOS4001R daily transactions for the date range.
 Domestic: TTTC0081R (orders of the last three months) / CTSC9215R (older, in chunks of at most
 a year, as the API requires) plus TTTC8715R daily P&L rows (fees and taxes, at most ten years
-per call) from the first stored order on, and CTPF1002R once per new symbol (name, market,
-ISIN -> instruments). After fetching, the fills table is rebuilt from everything stored
+per call) from the first stored order on, CTRGA011R rights (dividends and other corporate
+actions, brokers/kis/rights.py) and CTPF1002R once per new symbol (name, market, ISIN ->
+instruments). After fetching, the fills table is rebuilt from everything stored
 (brokers/kis/fills.py joins orders with the fee rows and spreads the fees).
 
 Date range: --from/--to, exchange-local dates. Without --from the first run starts at
@@ -32,7 +33,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from brokers.common.config import resolve
-from brokers.kis import auth, config, fills
+from brokers.kis import auth, config, fills, rights
 from brokers.kis.client import KisApiError, KisClient
 from brokers.kis.config import Account
 from brokers.kis.store import KisStore, account_key
@@ -148,8 +149,14 @@ def backfill_domestic(
     log.info("TTTC8715R: %d rows stored", n_pl)
     store.record_fetch(key, "domestic", start.isoformat(), end.isoformat(), n_orders + n_pl)
 
+    rights_rows = client.domestic_rights(account, _yyyymmdd(start), _yyyymmdd(end))
+    n_rights = store.replace_rights(rights_rows, key, _yyyymmdd(start), _yyyymmdd(end))
+    log.info("CTRGA011R: %d rows stored", n_rights)
+    rights.share_changes(store.rights(key))
+
     known = store.instruments()
-    for pdno in sorted({o["pdno"] for o in store.domestic_orders(key)} - set(known)):
+    traded = {o["pdno"] for o in store.domestic_orders(key)} | {r["pdno"] for r in store.rights(key)}
+    for pdno in sorted(traded - set(known)):
         info = client.stock_info(pdno)
         if not info.get("prdt_name"):
             log.warning("%s: CTPF1002R returned nothing; Yahoo symbol defaults to .KS", pdno)
@@ -185,6 +192,17 @@ def print_summary(store: KisStore, account: str, market: str) -> None:
     for r in flagged[:10]:
         line = f"  {r['trading_date']} {r['side']:4} {r['symbol']:6} {r['quantity']} @ {r['price']}"
         print(f"{line}  {r['flags']}  {r['fill_id']}")
+    if market == "domestic":
+        paid, pending = rights.dividends(store.rights(account), today=date.today())
+        total = sum((d.amount for d in paid), Decimal(0))
+        tax = sum((d.tax for d in paid), Decimal(0))
+        print(
+            f"Dividends           : {len(paid)} paid, gross {total:,.0f} - tax {tax:,.0f} = {total - tax:,.0f} KRW"
+            f"{f', {len(pending)} pending' if pending else ''}"
+        )
+        for d in paid:
+            mark = " (tax estimated)" if d.estimated_tax else ""
+            print(f"  {d.paid_on} {d.symbol:8} {d.quantity:>6} sh  {d.amount:>10,.0f} - {d.tax:>8,.0f} KRW{mark}")
     symbols = Counter(f.symbol for f in rows)
     print("By symbol (top 10):")
     for symbol, n in symbols.most_common(10):

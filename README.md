@@ -46,8 +46,8 @@ If a backfill is interrupted, re-running with the same options resumes from the 
 
 ### KIS (한국투자증권)
 
-Overseas (US) and domestic (KRX) fills are stored and exported; rights (dividends, splits) and
-split detection follow.
+Overseas (US) and domestic (KRX) fills and KRX dividends are stored and exported; split
+detection and the daily job follow.
 Setup: at [KIS Developers](https://apiportal.koreainvestment.com) issue a **live-trading** (실전투자) app
 key for the account, put it in `.env` as `KIS_APP_KEY` / `KIS_APP_SECRET` and the account number as
 `KIS_ACCOUNT=12345678-01` (종합계좌번호-계좌상품코드). Overseas endpoints also require the account to
@@ -73,6 +73,15 @@ account's cash balance has one currency, so create two Ghostfolio accounts befor
 (the instruments table filled by the backfill); the TradesViz CSV keeps the plain 6-digit code.
 Splits are not detected for KIS yet, so a split in a US holding shows up as a holdings mismatch
 (exit 4) until it is entered in `data/kis/adjustments.toml`.
+
+**Dividends** (KRX only — the API has no record of overseas dividends): the backfill stores the
+account's corporate actions (CTRGA011R) and `kis-export-ghostfolio --currency KRW` writes the paid
+ones as DIVIDEND activities (shares held × per share, withholding tax as the fee). A dividend whose
+payment date has not arrived is left out. KIS reports the tax only for pending dividends and zero
+for paid ones, so a paid dividend without one gets the statutory 15.4% withholding, logged as
+estimated; `brokers/kis/rights.py` holds that rule. Splits, bonus issues and other share-changing
+rights are listed with a warning rather than applied — the account has never had one, so the field
+arithmetic is unverified; add a `[[splits]]` entry by hand if one appears.
 
 How KIS fills are built (`brokers/kis/fills.py`): the order endpoint (TTTS3035R) has the order id,
 KST time, quantity and price but no fees; the daily-transaction endpoint (CTOS4001R) has the fees,
@@ -164,12 +173,13 @@ put the security token in `.env` as `GHOSTFOLIO_ACCESS_TOKEN` and the instance U
 
 ## Daily sync (automation)
 
-`daily-sync` runs the whole chain once a day: backfill → `toss-export-ghostfolio --cash` →
+`daily-sync` runs the whole chain: backfill → `toss-export-ghostfolio --cash` →
 Ghostfolio API import (dry run first; only new activities are created) → `toss-export-tradesviz`
 (copied to `[tradesviz] sync_dir` if set, e.g. a Google Drive folder TradesViz auto-syncs from).
 Anything that is not clean is sent to Telegram (`TELEGRAM_BOT_TOKEN` from @BotFather and
 `TELEGRAM_CHAT_ID` in `.env`) and/or a Discord/Slack incoming webhook (`NOTIFY_WEBHOOK_URL`);
-`--notify-success` also sends the daily summary.
+`--notify-changes` also sends the summary when the run is clean and new activities were imported
+(listing them), `--notify-success` sends it after every clean run.
 
 ```bash
 uv run daily-sync --notify-test          # first: message the bot, then this prints the chat id / sends a test
@@ -177,7 +187,8 @@ deploy/bin/daily-sync.sh                 # run now; log in data/logs/daily-sync.
 uv run daily-sync --no-notify            # print only
 ```
 
-Scheduled with a systemd user timer at 12:00 KST (`deploy/systemd/`):
+Scheduled with a systemd user timer twice a day, 09:30 KST (after US after-hours) and 18:30 KST
+(after Toss daytime trading), with `--notify-changes` (`deploy/systemd/`):
 
 ```bash
 ln -sf "$PWD"/deploy/systemd/daily-sync.{service,timer} ~/.config/systemd/user/

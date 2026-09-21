@@ -19,6 +19,7 @@
 | TTTC0081R / CTSC9215R | 주식일별주문체결조회 — 체결만(`CCLD_DVSN=01`), 정순, `EXCG_ID_DVSN_CD=ALL`. 실측: 신 TR은 3개월 넘는 범위를 주면 일부 행을 조용히 빠뜨림 → 3개월 이전은 구 TR(범위 1년 이내, `APBK1633`)로. 수수료 없음 | `client.domestic_orders` |
 | TTTC8715R | 기간별매매손익현황조회 — (거래일, 종목) 한 행에 매수·매도 합산, `fee`(수수료)·`tl_tax`(제세금). 범위 10년 이내. 실측 pdno는 6자리(문서 예제는 12자리) | `client.domestic_trade_profit` |
 | CTRP6504R | 해외주식 체결기준현재잔고 — `output2[]` 통화별 `frcr_dncl_amt_2`(외화예수금) → Ghostfolio 현금 잔고 | `client.overseas_present_balance` |
+| CTRGA011R | 기간별계좌권리현황조회 — `INQR_DVSN=03`, 기준일자 범위(11년도 한 번에 조회됨). 배당(`03`)은 `last_alct_amt` 총액·`cash_dfrm_dt` 지급일·`cblc_qty` 기준수량. 실측: `tax_amt`는 미지급 건에만 채워지고 지급 완료 건은 0 | `client.domestic_rights` |
 | CTPF1002R | 주식기본조회 — `mket_id_cd` STK/KSQ, `std_pdno` ISIN, `prdt_name` → instruments/Yahoo 심볼 | `client.stock_info` |
 
 ## OAuth인증

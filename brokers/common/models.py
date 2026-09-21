@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from fractions import Fraction
 
-__all__ = ["Fill", "Holding", "Split"]
+__all__ = ["Dividend", "Fill", "Holding", "Split"]
 
 
 @dataclass(frozen=True)
@@ -61,3 +61,32 @@ class Holding:
     quantity: Decimal
     currency: str
     name: str = ""
+
+
+@dataclass(frozen=True)
+class Dividend:
+    """A cash dividend the broker paid into the account.
+
+    amount and tax are totals in `currency`; quantity is the holding the payment was based on, so
+    amount / quantity is the per-share dividend. estimated_tax marks a tax figure this code worked
+    out because the broker reported none.
+    """
+
+    id: str  # stable across runs: "<broker>:<pay date>:<symbol>"
+    symbol: str
+    paid_on: date
+    quantity: Decimal
+    amount: Decimal
+    tax: Decimal
+    currency: str
+    name: str = ""
+    record_date: date | None = None
+    estimated_tax: bool = False
+
+    @property
+    def per_share(self) -> Decimal:
+        return self.amount / self.quantity if self.quantity else Decimal(0)
+
+    @property
+    def net(self) -> Decimal:
+        return self.amount - self.tax

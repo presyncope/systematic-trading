@@ -3,24 +3,28 @@
 Two currencies live in one KIS account (USD for US stocks, KRW for KRX), so the Ghostfolio side
 gets one account per currency ("KIS", "KIS KRW") and per-currency export files. Holdings come
 from TTTS3012R (overseas, USD) and TTTC8434R (domestic); cash from CTRP6504R (foreign
-currencies) and TTTC8434R (KRW 예수금). Split detection has no candle source yet.
+currencies) and TTTC8434R (KRW 예수금); KRW dividends from the rights table (CTRGA011R, see
+brokers/kis/rights.py). Split detection has no candle source yet.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from brokers.common.broker import AuthError
-from brokers.common.models import Holding
+from brokers.common.models import Dividend, Holding
 from brokers.common.store import FillSource
-from brokers.kis import auth, config
+from brokers.kis import auth, config, rights
 from brokers.kis.client import KisApiError, KisClient
 from brokers.kis.store import KisStore, account_key
 
 __all__ = ["KIS", "KisBroker"]
+
+log = logging.getLogger("kis.broker")
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -101,6 +105,29 @@ class KisBroker:
                 if qty:
                     out.append(Holding(h["pdno"], qty, "KRW", h.get("prdt_name", "")))
         return out
+
+    def dividends(self, store: FillSource, account: str, currency: str) -> list[Dividend]:
+        if currency != "KRW":
+            return []  # CTRGA011R is domestic; the API has no overseas dividend record
+        assert isinstance(store, KisStore)
+        paid, pending = rights.dividends(store.rights(account), today=date.today())
+        for r in pending:
+            log.info(
+                "%s %s dividend of %s KRW is not payable until %s; not exported",
+                r["bass_dt"],
+                r["pdno"],
+                r["alct_amt"],
+                r["cash_dfrm_dt"],
+            )
+        estimated = [d for d in paid if d.estimated_tax]
+        if estimated:
+            log.warning(
+                "%d dividend(s) had no tax figure from KIS; withholding estimated at %s%%: %s",
+                len(estimated),
+                rights.WITHHOLDING_RATE * 100,
+                ", ".join(f"{d.paid_on} {d.symbol} {d.amount}-{d.tax}" for d in estimated),
+            )
+        return paid
 
     def cash(self, client: KisClient, account: str, currency: str) -> Decimal:
         acct = config.parse_account(account)

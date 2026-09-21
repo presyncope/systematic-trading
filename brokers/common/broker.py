@@ -12,7 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
-from brokers.common.models import Holding
+from brokers.common.models import Dividend, Holding
 from brokers.common.splits import CandleSource
 from brokers.common.store import FillSource
 
@@ -79,4 +79,8 @@ class Broker(Protocol):
 
     def cash(self, client: Any, account: str, currency: str) -> Decimal:
         """Cash balance in `currency` (buying power / deposit), for the Ghostfolio account balance."""
+        ...
+
+    def dividends(self, store: FillSource, account: str, currency: str) -> list[Dividend]:
+        """Cash dividends already paid, for the Ghostfolio export. Empty when the API has none."""
         ...

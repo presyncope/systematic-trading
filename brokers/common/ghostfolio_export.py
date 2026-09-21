@@ -18,21 +18,23 @@ File layout (test/import/ok/sample.json upstream):
                 symbol     ticker as Yahoo Finance knows it (US tickers match; KRX codes get the
                            broker's .KS/.KQ mapping via Broker.ghostfolio_symbol)
                 dataSource YAHOO
-                type       BUY / SELL
-                quantity   filled quantity, current share basis
-                unitPrice  average fill price, current share basis
-                fee        commission + tax
+                type       BUY / SELL / DIVIDEND
+                quantity   filled quantity, current share basis (dividend: shares held)
+                unitPrice  average fill price, current share basis (dividend: per share)
+                fee        commission + tax (dividend: withholding tax)
                 comment    "<broker>:<orderId>" with --with-order-id, else null
 
 Split normalization matters here even more than for TradesViz: Ghostfolio values holdings at
 today's Yahoo price, so quantities must be in today's share basis or a pre-split position is
 worth 3x too little (SCHD) or 2000x too much (TANH).
 
+Dividends the broker reports (Broker.dividends, KIS only) are exported as DIVIDEND activities
+dated on the payment day, with the withholding tax as the fee.
+
 Ghostfolio flags an imported activity as a duplicate when date (to the second), symbol, type,
 quantity, price, fee and comment all match an existing one, so re-importing the full file only
 adds what is new. --from YYYY-MM-DD exports only sessions on or after that date instead.
-Dividends, deposits and withdrawals are not in the order history; add them in Ghostfolio by hand
-unless the broker provides them separately.
+Deposits and withdrawals are in no broker API here; add them in Ghostfolio by hand.
 
 --cash also records today's cash balance (the broker's buying power / deposit, which matches
 the app) on the Ghostfolio account. The import ignores balances for an account that already
@@ -55,6 +57,7 @@ from typing import Any
 from brokers.common import config, pipeline
 from brokers.common.broker import Broker
 from brokers.common.ledger import AdjustedFill
+from brokers.common.models import Dividend
 from brokers.common.pipeline import Prepared
 from ghostfolio.client import GhostfolioClient, GhostfolioError
 
@@ -67,6 +70,7 @@ __all__ = [
     "main",
     "push_cash_balance",
     "to_activity",
+    "to_dividend_activity",
 ]
 
 log = logging.getLogger("common.ghostfolio_export")
@@ -110,6 +114,23 @@ def to_activity(
     }
 
 
+def to_dividend_activity(d: Dividend, account: str, *, symbol: str | None = None) -> dict:
+    """A cash dividend: quantity = shares held, unitPrice = per share, fee = withholding tax."""
+    return {
+        "accountId": account_id(account),
+        "comment": None,
+        "currency": d.currency,
+        "dataSource": DATA_SOURCE,
+        "date": _midnight(d.paid_on),
+        "fee": float(d.tax),
+        "quantity": float(d.quantity),
+        "symbol": symbol or d.symbol,
+        "tags": [],
+        "type": "DIVIDEND",
+        "unitPrice": float(d.per_share),
+    }
+
+
 def export_json(
     fills: list[AdjustedFill],
     out: Path,
@@ -119,6 +140,7 @@ def export_json(
     order_id_prefix: str | None = None,
     cash: Decimal | None = None,
     symbols: dict[str, str] | None = None,
+    dividends: list[Dividend] | None = None,
 ) -> pipeline.ExportResult:
     """`symbols` maps a fill symbol to its Yahoo spelling where they differ."""
     now = datetime.now(UTC)
@@ -135,10 +157,14 @@ def export_json(
                 "platformId": None,
             }
         ],
-        "activities": [
-            to_activity(f, account, order_id_prefix=order_id_prefix, symbol=(symbols or {}).get(f.symbol))
-            for f in fills
-        ],
+        "activities": sorted(
+            [
+                to_activity(f, account, order_id_prefix=order_id_prefix, symbol=(symbols or {}).get(f.symbol))
+                for f in fills
+            ]
+            + [to_dividend_activity(d, account, symbol=(symbols or {}).get(d.symbol)) for d in dividends or []],
+            key=lambda a: (a["date"], a["symbol"]),
+        ),
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w") as f:
@@ -213,11 +239,16 @@ def main(broker: Broker, argv: list[str] | None = None) -> int:
             fills = [f for f in fills if f.trading_date >= args.from_date]
         currency = prepared.currency or "USD"
         account = args.gf_account or broker.ghostfolio_account(currency)
+        divs = [d for d in broker.dividends(prepared.store, prepared.account, currency)]
+        if args.from_date:
+            divs = [d for d in divs if d.paid_on >= args.from_date]
         symbols = {
             f.symbol: broker.ghostfolio_symbol(prepared.store, f.symbol, f.fill.currency)
             for f in fills
             if f.fill.currency != "USD"
         }
+        if currency != "USD":
+            symbols |= {d.symbol: broker.ghostfolio_symbol(prepared.store, d.symbol, currency) for d in divs}
         as_is = sorted(k for k, v in symbols.items() if v == k)
         if as_is:
             log.warning("Non-US symbols written as-is; Yahoo may need a suffix (e.g. 005930.KS): %s", ", ".join(as_is))
@@ -231,10 +262,18 @@ def main(broker: Broker, argv: list[str] | None = None) -> int:
             order_id_prefix=broker.name if args.with_order_id else None,
             cash=cash,
             symbols=symbols,
+            dividends=divs,
         )
         if cash is not None:
             log.info("Cash balance (%s): %s", currency, cash)
             push_cash_balance(account, cash, datetime.now(UTC).date())
+        if divs:
+            log.info(
+                "Included %d dividend(s), %s %s gross",
+                len(divs),
+                sum((d.amount for d in divs), Decimal(0)),
+                currency,
+            )
         if fills:
             log.info(
                 "Wrote %d activities (%s ~ %s, %s, %d excluded%s) -> %s",
