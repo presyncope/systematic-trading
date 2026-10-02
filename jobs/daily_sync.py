@@ -280,6 +280,7 @@ def main(argv: list[str] | None = None, *, runner: Runner = run_module) -> int:
     p.add_argument("--lock", type=Path, default=None, help="lock file (default: <db dir>/daily-sync.lock)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=sys.stderr)
+    notify.install_log_redaction()  # the Telegram token rides in request URLs that httpx logs
     if args.notify_test:
         return notify_test()
 

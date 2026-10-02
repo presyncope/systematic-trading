@@ -8,18 +8,43 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 
 from brokers.common import config
 
-__all__ = ["DISCORD_LIMIT", "TELEGRAM_LIMIT", "send", "telegram_chat_ids"]
+__all__ = ["DISCORD_LIMIT", "TELEGRAM_LIMIT", "RedactSecrets", "install_log_redaction", "send", "telegram_chat_ids"]
 
 log = logging.getLogger("jobs.notify")
 
 DISCORD_LIMIT = 2000  # characters per message
 TELEGRAM_LIMIT = 4096
 TELEGRAM_API = "https://api.telegram.org"
+
+# The Telegram bot token is part of the request URL, and httpx logs every URL at INFO.
+_BOT_TOKEN = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
+
+
+class RedactSecrets(logging.Filter):
+    """Mask the bot token and the webhook URL in every log line that passes a handler."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = _BOT_TOKEN.sub("/bot<redacted>", message)
+        webhook = config.notify_webhook_url()
+        if webhook:
+            redacted = redacted.replace(webhook, "<webhook redacted>")
+        if redacted != message:
+            record.msg, record.args = redacted, None
+        return True
+
+
+def install_log_redaction() -> None:
+    """Attach RedactSecrets to the root handlers; call after logging is configured."""
+    for handler in logging.getLogger().handlers:
+        if not any(isinstance(f, RedactSecrets) for f in handler.filters):
+            handler.addFilter(RedactSecrets())
 
 
 def _clip(text: str, limit: int) -> str:
