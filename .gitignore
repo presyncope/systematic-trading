@@ -1,7 +1,6 @@
 # Credentials / token cache
 .env
 .toss_token.json
-.kis_token.json
 
 # Collected data
 data/

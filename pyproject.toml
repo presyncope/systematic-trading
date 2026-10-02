@@ -13,10 +13,6 @@ toss-auth = "brokers.toss.auth:main"
 toss-backfill-orders = "brokers.toss.backfill_orders:main"
 toss-export-tradesviz = "brokers.toss.export_tradesviz:main"
 toss-export-ghostfolio = "brokers.toss.export_ghostfolio:main"
-kis-auth = "brokers.kis.auth:main"
-kis-backfill = "brokers.kis.backfill:main"
-kis-export-tradesviz = "brokers.kis.export_tradesviz:main"
-kis-export-ghostfolio = "brokers.kis.export_ghostfolio:main"
 daily-sync = "jobs.daily_sync:main"
 
 [build-system]
@@ -28,6 +24,7 @@ packages = ["brokers", "ghostfolio", "jobs"]
 
 [tool.ruff]
 line-length = 120
+extend-exclude = ["trunk"]   # parked work, not part of the build
 target-version = "py314"
 
 [tool.ruff.lint]

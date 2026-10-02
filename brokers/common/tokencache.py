@@ -1,7 +1,7 @@
 """Access-token cache file shared by the broker auth modules.
 
 One JSON file per broker (mode 0600, written atomically) so that every process of this repo
-reuses the same token: both Toss and KIS invalidate or rate-limit re-issuance, so independent
+reuses the same token: brokers invalidate or rate-limit re-issuance, so independent
 issuance per process is not an option.
 
 Layout: {"access_token", "token_type", "expires_in", "issued_at", "expires_at"} (epoch seconds).

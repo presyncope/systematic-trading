@@ -2,7 +2,7 @@
 
 - .env         : secrets (gitignored). Broker credentials plus GHOSTFOLIO_ACCESS_TOKEN,
                  NOTIFY_WEBHOOK_URL, TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID.
-- config.toml  : non-secret settings (committed). One section per broker ([toss], [kis]) read via
+- config.toml  : non-secret settings (committed). One section per broker ([toss]) read via
                  broker_settings(); [ghostfolio] url; [tradesviz] sync_dir.
 
 Both are located from the repo root, independent of cwd. A broker's config module wraps

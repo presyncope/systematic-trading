@@ -10,7 +10,7 @@
 | Budget          | ≤ ₩150k/month for paid services                                                                                    |
 | Time            | ~1h weekdays, 4–6h weekends (~9–11h/week)                                                                          |
 | Build principle | Buy/adopt if a mature tool exists. Delegate implementation to an agent, but reserve separate time to verify output |
-| Brokers         | Toss Securities = primary account, KIS = secondary. Integrate Toss first                                           |
+| Brokers         | Toss Securities = the only integration. KIS dropped 2026-10-02 (implementation parked in `trunk/`)                |
 
 ---
 
@@ -70,7 +70,7 @@ Avoid `yfinance` for anything beyond prototyping.
 ### 1.6 Broker APIs
 
 - **Toss Securities Open API** — primary integration target. OAuth2 client credentials, base URL `https://openapi.tossinvest.com`, docs at `developers.tossinvest.com`. Account, holdings, and order queries require the `X-Tossinvest-Account` header. No official SDK — generate a client from the OpenAPI spec. Rollout is staged; general-availability date and history depth are unverified, so validate history depth first before building on it.
-- **KIS Developers** — secondary and a known-good fallback. Free REST + websocket. Overseas base path `uapi/overseas-stock/v1/trading/`; fills, daily transactions, and period P&L endpoints exist. Implemented directly (`brokers/kis/`, docs in `agent-docs/kis/`) rather than via python-kis: fills and fees live on different endpoints that the library does not join, it still uses TR_IDs the docs mark as deprecated, and a v3 rewrite is pending.
+- **KIS Developers** — **dropped 2026-10-02.** It was implemented directly (overseas and domestic fills with their fees, holdings, cash, KRX dividends) and then retired by decision, not by a technical blocker; the working code is parked in `trunk/kis/` and the API docs stay in `agent-docs/kis/` for reference. Notes if it is ever revived: fills and fees come from different endpoints and must be joined per trade date/symbol/side, the usable TR_IDs are the ones the docs mark as deprecated, and a v3 rewrite is pending.
 - Do **not** use unofficial scraping or session reuse — ToS and blocking risk.
 
 ---
@@ -79,7 +79,7 @@ Avoid `yfinance` for anything beyond prototyping.
 
 Everything else is off-the-shelf.
 
-1. **Broker fills → TradesViz/Ghostfolio CSV adapter** (Toss first, KIS second) — the core required piece.
+1. **Broker fills → TradesViz/Ghostfolio CSV adapter** (Toss) — the core required piece.
 2. **Data ingest & cache pipeline** — vendor APIs → local parquet.
 3. **Glue layer** — backtest output → quantstats tearsheet + purgedcv validation wrapper.
 4. **FX (USD/KRW) & capital gains estimator** — no off-the-shelf equivalent exists.
@@ -87,7 +87,7 @@ Everything else is off-the-shelf.
 ### Data flow
 
 ```
-[Toss/KIS fills & balances] → (CSV adapter) → [TradesViz journal] + [Ghostfolio performance]
+[Toss fills & balances]     → (CSV adapter) → [TradesViz journal] + [Ghostfolio performance]
                                                     ↓
                                         [quantstats risk dashboard]
 
@@ -177,6 +177,5 @@ Fails any of these → redesign or discard. Do not be fooled by a raw Sharpe rat
 ## Caveats
 
 - Pricing and feature tiers are as of 2026 and change; re-check vendor pages before committing.
-- Toss Open API is still in staged rollout — GA date, history depth, and stability are unverified. Validate history depth before making it the primary integration; KIS is the fallback.
-- Exact KIS TR_IDs and history limits for overseas fills and period P&L need confirmation via the API portal and the official `koreainvestment/open-trading-api` repo. Domestic fills split at a 3-month boundary (`TTTC8001R` / `CTSC9115R`).
+- Toss Open API is still in staged rollout — GA date, history depth, and stability are unverified. Validate history depth before making it the primary integration; there is no second broker integration now that KIS is dropped.
 - Backtest statistics and tax calculations produced by an agent must be manually verified before use.

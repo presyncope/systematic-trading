@@ -1,7 +1,7 @@
 # systematic-trading
 
-Fetches order history from the Toss Securities Open API (and, in progress, the KIS Open API),
-stores it in SQLite, and exports fills as TradesViz and Ghostfolio files.
+Fetches order history from the Toss Securities Open API, stores it in SQLite, and exports fills as
+TradesViz and Ghostfolio files.
 
 ## Setup
 
@@ -17,7 +17,8 @@ Issue a client under Toss Securities WTS Settings > Open API, and register your 
 - `data/toss/adjustments.toml` — manual corrections for the exporter (gitignored, see below)
 
 Package layout: `brokers/common/` is broker-neutral (ledger, split detection, adjustments, the export
-pipeline and both exporters); `brokers/toss/` and `brokers/kis/` plug one broker each into it.
+pipeline and both exporters); `brokers/toss/` plugs one broker into it. `trunk/` holds parked work
+that is not part of the build (see `trunk/README.md`).
 
 ## Usage
 
@@ -43,65 +44,6 @@ uv run toss-export-tradesviz --tz America/New_York       # exchange time instead
 ```
 
 If a backfill is interrupted, re-running with the same options resumes from the last page.
-
-### KIS (한국투자증권)
-
-Overseas (US) and domestic (KRX) fills and KRX dividends are stored and exported; split
-detection and the daily job follow.
-Setup: at [KIS Developers](https://apiportal.koreainvestment.com) issue a **live-trading** (실전투자) app
-key for the account, put it in `.env` as `KIS_APP_KEY` / `KIS_APP_SECRET` and the account number as
-`KIS_ACCOUNT=12345678-01` (종합계좌번호-계좌상품코드). Overseas endpoints also require the account to
-have 해외증권 거래신청 done.
-
-```bash
-uv run kis-auth                              # issue a token (cached in .kis_token.json, valid for 24h)
-uv run kis-auth --status | --revoke          # cache status / revoke the token early
-uv run python -m brokers.kis.client --probe  # call the domestic + overseas balance APIs once
-uv run kis-backfill                          # overseas + domestic fills → data/kis/kis.sqlite (incremental)
-uv run kis-backfill --market domestic        # one market only
-uv run kis-backfill --restart                # the whole history again
-uv run kis-export-ghostfolio --cash          # USD fills → data/kis/ghostfolio_activities.json, account "KIS"
-uv run kis-export-ghostfolio --currency KRW --cash   # KRX fills → ..._krw.json, account "KIS KRW"
-uv run kis-export-tradesviz [--currency KRW] # USD → data/kis/tradesviz_executions.csv, KRW → ..._krw.csv
-```
-
-The exporters are the shared ones (same options, checks and exit codes as the Toss commands; the
-broker account option is `--kis-account`). One KIS account holds both currencies, and a Ghostfolio
-account's cash balance has one currency, so create two Ghostfolio accounts before importing:
-**KIS** (USD) and **KIS KRW** (KRW). `--cash` records the USD 외화예수금 (CTRP6504R) or the KRW 예수금
-(TTTC8434R) on the matching account. KRX symbols are written for Yahoo as `005930.KS` / `440110.KQ`
-(the instruments table filled by the backfill); the TradesViz CSV keeps the plain 6-digit code.
-Splits are not detected for KIS yet, so a split in a US holding shows up as a holdings mismatch
-(exit 4) until it is entered in `data/kis/adjustments.toml`.
-
-**Dividends** (KRX only — the API has no record of overseas dividends): the backfill stores the
-account's corporate actions (CTRGA011R) and `kis-export-ghostfolio --currency KRW` writes the paid
-ones as DIVIDEND activities (shares held × per share, withholding tax as the fee). A dividend whose
-payment date has not arrived is left out. KIS reports the tax only for pending dividends and zero
-for paid ones, so a paid dividend without one gets the statutory 15.4% withholding, logged as
-estimated; `brokers/kis/rights.py` holds that rule. Splits, bonus issues and other share-changing
-rights are listed with a warning rather than applied — the account has never had one, so the field
-arithmetic is unverified; add a `[[splits]]` entry by hand if one appears.
-
-How KIS fills are built (`brokers/kis/fills.py`): the order endpoint (TTTS3035R) has the order id,
-KST time, quantity and price but no fees; the daily-transaction endpoint (CTOS4001R) has the fees,
-aggregated per trade date, symbol and side. The two are joined on that key and the fees are spread
-over the day's orders in proportion to their amount (`dmst_frcr_fee1` → commission, `frcr_fee1` → fees).
-Transaction rows without an order (fractional-share trades, which TTTS3035R omits) become one
-synthetic fill at the session close; orders without a transaction row yet are stored with zero fees
-and flagged `unsettled` until the next run (every run re-fetches the last 45 days). A ticker change
-is recognised from the ISIN on the transaction rows and the earlier fills are renamed to the current
-ticker. KIS reports the order-acceptance time, not the fill time, so that is what `filled_at` holds.
-
-Domestic fills work the same way with TTTC0081R (orders of the last three months) / CTSC9215R (older,
-fetched in chunks of a year) and TTTC8715R, which has one row per trade date and symbol with the
-day's commission (spread over that day's orders in the symbol, whole won) and transaction taxes
-(spread over the sells). CTPF1002R is called once per symbol to learn its market, which gives the
-Yahoo symbol (`005930.KS`, `440110.KQ`) the Ghostfolio export needs.
-
-KIS issues at most one token a day per app key (a repeat request within 6 hours returns the same
-token, more frequent requests are refused), so the cache file is shared by every command. The
-paper-trading domain is not supported; the [kis] section of config.toml points at the live one.
 
 ### What the exporters check
 
@@ -204,8 +146,9 @@ imports but is reported every day until resolved.
 ## Notes
 
 - Toss API spec: `agent-docs/toss/openapi.json`
-- KIS (한국투자증권) API docs: `agent-docs/kis/README.md` (index) + one markdown file per API, generated from the
-  portal xlsx export by `uv run --with openpyxl scripts/convert_kis_docs.py agent-docs/kis/source/<export>.xlsx`
+- KIS (한국투자증권) API docs, reference only — the integration was dropped and parked in `trunk/`:
+  `agent-docs/kis/README.md` (index) + one markdown file per API, generated from the portal xlsx export by
+  `uv run --with openpyxl scripts/convert_kis_docs.py agent-docs/kis/source/<export>.xlsx`
 - Order types the Open API does not support (e.g. after-hours closing-price orders) are not returned.
 - Execution info is an order-level aggregate only (no per-fill list), so one order = one CSV row.
 - Fills are exported regardless of order status (a canceled order can carry a partial fill).

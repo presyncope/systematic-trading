@@ -10,10 +10,11 @@ apps/api/src/app/activities/activities.service.ts orders by date, then id).
 File layout (test/import/ok/sample.json upstream):
 
     accounts    one entry named --account (default: the broker's account name for the currency,
-                e.g. "KIS" for USD and "KIS KRW" for KRW, since a Ghostfolio account's cash balance
-                has one currency). Ghostfolio reuses the user's existing account with the same
-                name and currency and books the activities into it, so the account must exist
-                before importing; its id here is a stable UUID5 of the name.
+                e.g. "Toss" for USD; a Ghostfolio account's cash balance has one currency, so a
+                broker holding two gets one account per currency). Ghostfolio reuses the user's
+                existing account with the same name and currency and books the activities into it,
+                so the account must exist before importing; its id here is a stable UUID5 of the
+                name.
     activities  date       fill timestamp in UTC; valued on that UTC day
                 symbol     ticker as Yahoo Finance knows it (US tickers match; KRX codes get the
                            broker's .KS/.KQ mapping via Broker.ghostfolio_symbol)
@@ -28,8 +29,8 @@ Split normalization matters here even more than for TradesViz: Ghostfolio values
 today's Yahoo price, so quantities must be in today's share basis or a pre-split position is
 worth 3x too little (SCHD) or 2000x too much (TANH).
 
-Dividends the broker reports (Broker.dividends, KIS only) are exported as DIVIDEND activities
-dated on the payment day, with the withholding tax as the fee.
+Dividends the broker reports (Broker.dividends; no broker here does yet - the Toss API has none)
+are exported as DIVIDEND activities dated on the payment day, with the withholding tax as the fee.
 
 Ghostfolio flags an imported activity as a duplicate when date (to the second), symbol, type,
 quantity, price, fee and comment all match an existing one, so re-importing the full file only

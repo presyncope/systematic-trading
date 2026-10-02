@@ -9,14 +9,6 @@ tradesviz_csv = "data/toss/tradesviz_executions.csv"
 ghostfolio_json = "data/toss/ghostfolio_activities.json"
 adjustments = "data/toss/adjustments.toml"   # manual corrections, see brokers/common/adjustments.py
 
-[kis]
-base_url = "https://openapi.koreainvestment.com:9443"   # live trading domain (the paper-trading one is not supported)
-token_cache = ".kis_token.json"
-db = "data/kis/kis.sqlite"
-tradesviz_csv = "data/kis/tradesviz_executions.csv"
-ghostfolio_json = "data/kis/ghostfolio_activities.json"
-adjustments = "data/kis/adjustments.toml"
-
 [ghostfolio]
 url = "http://100.104.205.124:3333"   # the address deploy/ghostfolio publishes on
 
