@@ -11,6 +11,8 @@ Steps, each run as a subprocess of this venv so its output is logged and can be 
                                          that TradesViz auto-syncs from
     5. toss-export-portfolio             today's USD holdings + USD cash as a portfolio file that
                                          tradingagents-web reads; runs whatever the steps above did
+    6. USD cash check                    compares today's USD cash with the last run's; a change
+                                         with no new activity (deposit, exchange) counts as news
 
 A step's exit code decides what follows: backfill failure skips everything (stale data would
 only be re-exported); exporter exit 3 (a sell without an opening fill needs a decision in
@@ -36,6 +38,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
@@ -162,7 +165,46 @@ def _sync(runner: Runner, *, cash: bool, import_client: GhostfolioClient | None 
     portfolio = runner("brokers.toss.export_portfolio", [])
     portfolio.name = "portfolio-export"
     results.append(portfolio)
+    if portfolio.ok:
+        traded = any(r.changed for r in results)
+        results.append(check_cash(config.portfolio_json_path(), state_path(), traded=traded))
     return results
+
+
+def state_path() -> Path:
+    """What daily-sync remembers between runs (gitignored data dir, next to the lock)."""
+    return config.db_path().parent / "daily-sync-state.json"
+
+
+def check_cash(portfolio_json: Path, state_file: Path, *, traded: bool) -> StepResult:
+    """Compare the USD cash in today's portfolio file with the last run's.
+
+    Cash moves with every trade, so a change counts as news (a notification under
+    --notify-changes) only when no new activity was imported: a deposit, a currency
+    exchange or a withdrawal, which the Toss API has no transaction record of.
+    """
+    name = "usd-cash"
+    try:
+        cash = Decimal(str(json.loads(portfolio_json.read_text())["cash"])).quantize(Decimal("0.01"))
+    except (OSError, ValueError, KeyError) as e:
+        return StepResult(name, "warn", f"could not read {portfolio_json.name}: {e}")
+    try:
+        state = json.loads(state_file.read_text())
+    except (OSError, ValueError):
+        state = {}
+    previous = state.get("usd_cash")
+    state["usd_cash"] = str(cash)
+    state_file.write_text(json.dumps(state, indent=2) + "\n")
+    if previous is None:
+        return StepResult(name, "ok", f"{cash:,} USD (first record)")
+    previous = Decimal(previous)
+    if cash == previous:
+        return StepResult(name, "ok", f"{cash:,} USD, unchanged")
+    delta = cash - previous
+    note = f"{previous:,} → {cash:,} USD ({delta:+,})"
+    if traded:
+        return StepResult(name, "ok", f"{note} with trades")
+    return StepResult(name, "ok", f"💵 {note}, no trades: deposit, exchange or withdrawal", changed=True)
 
 
 def _sync_orders(runner: Runner, *, cash: bool, import_client: GhostfolioClient | None = None) -> list[StepResult]:
@@ -229,7 +271,8 @@ def main(argv: list[str] | None = None, *, runner: Runner = run_module) -> int:
     p.add_argument(
         "--notify-changes",
         action="store_true",
-        help="also send the summary when everything is fine and new activities were imported",
+        help="also send the summary when everything is fine and new activities were imported, "
+        "or USD cash changed without a trade",
     )
     p.add_argument("--no-notify", action="store_true", help="never send a notification (print only)")
     p.add_argument("--notify-test", action="store_true", help="send a test notification and exit")
