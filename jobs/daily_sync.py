@@ -9,6 +9,8 @@ Steps, each run as a subprocess of this venv so its output is logged and can be 
     4. toss-export-tradesviz --offline   CSV (splits were just synced in step 2); copied to
                                          [tradesviz] sync_dir when set, e.g. a Google Drive folder
                                          that TradesViz auto-syncs from
+    5. toss-export-portfolio             today's USD holdings + USD cash as a portfolio file that
+                                         tradingagents-web reads; runs whatever the steps above did
 
 A step's exit code decides what follows: backfill failure skips everything (stale data would
 only be re-exported); exporter exit 3 (a sell without an opening fill needs a decision in
@@ -155,6 +157,15 @@ def summarize(results: list[StepResult], started: datetime) -> str:
 
 
 def _sync(runner: Runner, *, cash: bool, import_client: GhostfolioClient | None = None) -> list[StepResult]:
+    results = _sync_orders(runner, cash=cash, import_client=import_client)
+    # The holdings snapshot comes straight from the API, so it does not depend on the order steps.
+    portfolio = runner("brokers.toss.export_portfolio", [])
+    portfolio.name = "portfolio-export"
+    results.append(portfolio)
+    return results
+
+
+def _sync_orders(runner: Runner, *, cash: bool, import_client: GhostfolioClient | None = None) -> list[StepResult]:
     results: list[StepResult] = []
 
     backfill = runner("brokers.toss.backfill_orders", [])

@@ -32,6 +32,7 @@ __all__ = [
     "ghostfolio_json_path",
     "ghostfolio_url",
     "load",
+    "portfolio_json_path",
     "notify_webhook_url",
     "section",
     "telegram_credentials",
@@ -49,6 +50,7 @@ DEFAULTS: dict[str, str] = {
     "tradesviz_csv": "data/toss/tradesviz_executions.csv",
     "ghostfolio_json": "data/toss/ghostfolio_activities.json",
     "adjustments": "data/toss/adjustments.toml",
+    "portfolio_json": "data/toss/portfolio.json",
 }
 
 
@@ -80,6 +82,10 @@ def tradesviz_csv_path() -> Path:
 
 def ghostfolio_json_path() -> Path:
     return common.resolve(_get("ghostfolio_json"))
+
+
+def portfolio_json_path() -> Path:
+    return common.resolve(_get("portfolio_json"))
 
 
 def adjustments_path() -> Path:

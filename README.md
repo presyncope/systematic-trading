@@ -27,6 +27,7 @@ uv run toss-auth                 # issue a token (cached in .toss_token.json, va
 uv run toss-backfill-orders      # backfill all closed orders → data/toss/orders.sqlite
 uv run toss-export-tradesviz     # USD fills → data/toss/tradesviz_executions.csv
 uv run toss-export-ghostfolio    # USD fills → data/toss/ghostfolio_activities.json
+uv run toss-export-portfolio     # USD holdings + USD cash → data/toss/portfolio.json (for tradingagents-web)
 ```
 
 Common options:
