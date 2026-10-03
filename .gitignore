@@ -17,3 +17,6 @@ build/
 .ruff_cache/
 .pytest_cache/
 .mypy_cache/
+
+# Playwright MCP output (screenshots, page snapshots)
+.playwright-mcp/
