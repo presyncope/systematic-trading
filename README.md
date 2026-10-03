@@ -114,6 +114,46 @@ the app). The import ignores balances of an existing account, so this uses Ghost
 put the security token in `.env` as `GHOSTFOLIO_ACCESS_TOKEN` and the instance URL in `config.toml`
 (`[ghostfolio] url`).
 
+### Instance features that are off by default
+
+Ghostfolio keeps a fair amount behind environment flags and one user setting. What is enabled here:
+
+**MCP server** — `ENABLE_FEATURE_MCP=true` in `deploy/ghostfolio/.env`. An AI client reads the
+portfolio and imports activities over `POST http://100.104.205.124:3333/mcp`. The bearer token is the
+id of an access of type `MCP` (My Ghostfolio > Access, or `POST /api/v1/access`); this instance has one
+aliased *Claude Code*, valid until 2027-10-03, with the scopes `account:read`, `activity:read`,
+`portfolio:read`, `watchlist:read` and `activity:create`. It is registered in Claude Code at **user**
+scope (`~/.claude.json`) rather than in this repo, because the token is a credential:
+
+```bash
+claude mcp add --transport http --scope user ghostfolio http://100.104.205.124:3333/mcp \
+  --header "Authorization: Bearer <access id>"
+```
+
+The tools are `get-accounts`, `get-activities`, `get-portfolio`, `search-asset-profiles` and
+`import-activities`. An MCP access never reads monetary values (no balances, no market values) and
+cannot update or delete; `activity:create` is what lets it import. Revoke it in the UI or with
+`DELETE /api/v1/access/:id`. `ROOT_URL` must be the exact host clients call — `/mcp` rejects any other
+`Host` header — which is why it is the tailnet IP and not the MagicDNS name (that name does not resolve
+on this server).
+
+**Experimental features** — My Ghostfolio > Settings, already on. It reveals "Copy portfolio data to
+clipboard for AI prompt" in the Analysis page's ⋮ menu, the *By ETF Holding* allocation card, the
+activity type filter, dividend and quantity figures plus a historical market-data editor in the holding
+dialog, the *Splits* tab in Admin > Market Data, the safe-withdrawal-rate selector on the FIRE page, and
+the Bull Board job queue at `/admin/jobs` for an admin.
+
+**Stock splits** — Admin > Market Data > *Splits*, or `POST /api/v1/asset-profiles/:dataSource/:symbol/splits`.
+Ghostfolio 3.71.0 adjusts activities by splits itself: before a split date it multiplies the quantity by
+`numerator/denominator` and divides the unit price by it, accumulating consecutive splits exactly. This
+project does not use it. The exporter already normalizes quantities to the current share basis and that
+path is verified against the broker's holdings, and the `USER` role is not granted the permission yet
+(`libs/common/src/lib/permissions.ts` carries a TODO until the feature leaves experimental). Worth
+revisiting if it becomes stable.
+
+Dry-run imports are already in use: `daily-sync` posts the export file with `dryRun=true` first and only
+imports for real when the preview reports something new (`jobs/daily_sync.py::import_to_ghostfolio`).
+
 ## Daily sync (automation)
 
 `daily-sync` runs the whole chain: backfill → `toss-export-ghostfolio --cash` →
